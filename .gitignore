@@ -1,0 +1,32 @@
+# Binaries and build outputs
+bin/
+dist/
+*.exe
+*.out
+*.test
+
+# Go
+backend/bin/
+backend/coverage.out
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+node_modules/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
