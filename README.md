@@ -204,3 +204,10 @@ RUN_REAL_GITHUB_E2E=1 npm --prefix frontend run test:e2e
 - **シンボル単位（関数・クラス）の Call / Reference グラフ**：ファイル内のどの関数・クラスが import されているかまでの細粒度 Impact Analysis
 - **コミット間 Diff 解析**：2 つのコミット SHA 間で追加・削除された依存エッジのハイライト
 - **マルチ言語対応**：Tree-sitter Go / TypeScript パーサの追加によるポリグロットリポジトリ解析
+
+---
+
+## 11. ライセンス
+
+本プロジェクトは [MIT License](LICENSE) のもとで公開されています。
+
