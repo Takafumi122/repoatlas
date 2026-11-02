@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-repoatlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-repoatlas}
+      POSTGRES_DB: ${POSTGRES_DB:-repoatlas}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-repoatlas} -d ${POSTGRES_DB:-repoatlas}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-repoatlas}:${POSTGRES_PASSWORD:-repoatlas}@postgres:5432/${POSTGRES_DB:-repoatlas}?sslmode=disable"
+      - "up"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["/app/api"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgres://${POSTGRES_USER:-repoatlas}:${POSTGRES_PASSWORD:-repoatlas}@postgres:5432/${POSTGRES_DB:-repoatlas}?sslmode=disable
+      API_ADDR: ":8080"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      ANALYZER_VERSION: ${ANALYZER_VERSION:-v1.0.0}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      RATE_LIMIT_PER_HOUR: ${RATE_LIMIT_PER_HOUR:-60}
+      POST_ANALYSES_RATE_LIMIT_PER_MIN: ${POST_ANALYSES_RATE_LIMIT_PER_MIN:-10}
+      MAX_QUEUED_JOBS: ${MAX_QUEUED_JOBS:-25}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
+      MOCK_GITHUB_FIXTURE_DIR: ${MOCK_GITHUB_FIXTURE_DIR:-}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "/app/api", "-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["/app/worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgres://${POSTGRES_USER:-repoatlas}:${POSTGRES_PASSWORD:-repoatlas}@postgres:5432/${POSTGRES_DB:-repoatlas}?sslmode=disable
+      ANALYZER_VERSION: ${ANALYZER_VERSION:-v1.0.0}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-2s}
+      ANALYSIS_TIMEOUT: ${ANALYSIS_TIMEOUT:-90s}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      AUTO_MIGRATE: ${WORKER_AUTO_MIGRATE:-false}
+      MOCK_GITHUB_FIXTURE_DIR: ${MOCK_GITHUB_FIXTURE_DIR:-}
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-same-origin}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-same-origin}
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://api:8080}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
