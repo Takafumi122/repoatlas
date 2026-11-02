@@ -1,0 +1,13 @@
+# Railway configuration for RepoAtlas Worker service
+# Root Directory in Railway Service Settings: /backend
+# Config File Path in Railway Service Settings: /backend/railway.worker.toml
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "/app/worker"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+numReplicas = 1

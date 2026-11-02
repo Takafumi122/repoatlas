@@ -1,0 +1,15 @@
+# Railway configuration for RepoAtlas Frontend (Next.js) service
+# Root Directory in Railway Service Settings: /frontend
+# Config File Path in Railway Service Settings: /frontend/railway.toml
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "sh -c './node_modules/.bin/next start -H 0.0.0.0 -p ${PORT:-3000}'"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+numReplicas = 1
