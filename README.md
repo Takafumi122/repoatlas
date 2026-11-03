@@ -11,8 +11,6 @@
 ### 🌐 デモンストレーション
 ### 👉 **https://web-production-6e4cf.up.railway.app/**
 
-*(URL を差し替える箇所: `YOUR_URL_HERE`)*
-
 </div>
 
 ---
