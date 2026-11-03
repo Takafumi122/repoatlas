@@ -8,8 +8,8 @@
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js&logoColor=white)](frontend/package.json)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](docs/03-database.md)
 
-### 🌐 Web アプリ稼働中（ブラウザで今すぐ試せます）
-### 👉 **[RepoAtlas ライブデモを開く](YOUR_URL_HERE)**
+### 🌐 デモンストレーション
+### 👉 **https://web-production-6e4cf.up.railway.app/**
 
 *(URL を差し替える箇所: `YOUR_URL_HERE`)*
 
