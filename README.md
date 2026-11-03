@@ -1,5 +1,22 @@
 # RepoAtlas — Zero-Execution Python Codebase & Dependency Explorer
 
+<div align="center">
+
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Try_Online-success?style=for-the-badge&logo=railway&logoColor=white)](YOUR_URL_HERE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](backend/go.mod)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js&logoColor=white)](frontend/package.json)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](docs/03-database.md)
+
+### 🌐 Web アプリ稼働中（ブラウザで今すぐ試せます）
+### 👉 **[RepoAtlas ライブデモを開く](YOUR_URL_HERE)**
+
+*(URL を差し替える箇所: `YOUR_URL_HERE`)*
+
+</div>
+
+---
+
 **RepoAtlas** は、公開 GitHub リポジトリ（Python）の URL を入力するだけで、**リポジトリ内のコードを一切実行せずに静的解析**し、ファイル間の依存関係グラフ・最初に読むべき推奨順序（**Guided Code Tour**）・変更時の潜在的影響範囲（**BFS Impact Analysis**）・ディレクトリ単位のアーキテクチャ構造（**Architecture View**）をブラウザ上でインタラクティブに探索できる Web アプリケーションです。
 
 ---
