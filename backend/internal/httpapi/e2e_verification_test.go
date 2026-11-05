@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/repoatlas/repoatlas/backend/internal/analyzer"
 	"github.com/repoatlas/repoatlas/backend/internal/analyzer/graph"
@@ -27,21 +28,51 @@ import (
 
 // TestE2E_FullTenVerificationItems runs the end-to-end verification against real PostgreSQL 16.
 func TestE2E_FullTenVerificationItems(t *testing.T) {
-	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://repoatlas:repoatlas@localhost:5432/repoatlas?sslmode=disable"
+	ctx := context.Background()
+	var pool *pgxpool.Pool
+
+	if dbURL := os.Getenv("TEST_DATABASE_URL"); dbURL != "" {
+		pingCtx, pingCancel := context.WithTimeout(ctx, 2*time.Second)
+		if p, err := pgxpool.New(pingCtx, dbURL); err == nil {
+			if err := p.Ping(pingCtx); err == nil {
+				pool = p
+			} else {
+				p.Close()
+			}
+		}
+		pingCancel()
 	}
 
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Skipf("skipping real PostgreSQL E2E test (cannot connect to %s): %v", dbURL, err)
+	if pool == nil {
+		epPort := uint32(15434)
+		runtimeDir := filepath.Join(t.TempDir(), "epg-runtime")
+		dataDir := filepath.Join(t.TempDir(), "epg-data")
+
+		epg := embeddedpostgres.NewDatabase(
+			embeddedpostgres.DefaultConfig().
+				Version(embeddedpostgres.V16).
+				Port(epPort).
+				Username("repoatlas").
+				Password("repoatlas").
+				Database("repoatlas").
+				RuntimePath(runtimeDir).
+				DataPath(dataDir),
+		)
+		if err := epg.Start(); err != nil {
+			t.Fatalf("failed to start embedded PostgreSQL 16: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = epg.Stop()
+		})
+
+		epURL := fmt.Sprintf("postgres://repoatlas:repoatlas@127.0.0.1:%d/repoatlas?sslmode=disable", epPort)
+		p, err := pgxpool.New(ctx, epURL)
+		if err != nil {
+			t.Fatalf("connect to embedded PostgreSQL 16: %v", err)
+		}
+		pool = p
 	}
 	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		t.Skipf("skipping real PostgreSQL E2E test (ping failed for %s): %v", dbURL, err)
-	}
 
 	// Clean and run all 4 migrations up
 	for _, mig := range []string{

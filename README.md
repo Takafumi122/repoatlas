@@ -50,6 +50,9 @@ RepoAtlas は **「ゼロ実行（Zero-Execution）」** と **「決定論的�
   - 任意のファイル/パッケージを選択すると、逆方向 `import` エッジを幅優先探索（BFS）して直接依存元（Depth 1）と間接依存元（Depth 2+）を算出。循環依存に対する無限ループ防止と最大探索深度の切り替え、キャンバス上の影響経路ハイライトを備えています。
 - **Architecture View（ディレクトリ集約グラフ）**
   - ファイル/パッケージ単位のビューとディレクトリ単位に集約した `Architecture View` をワンクリックで切り替え可能。
+- **Pull Request Impact Analysis & Explainable Dependencies（PR影響範囲解析 & 依存根拠）**
+  - GitHub Pull Request URL（`https://github.com/owner/repo/pull/123`）を入力し、BASE/HEAD コミットを特定して変更ファイル起点での Multi-source BFS 逆方向影響解析を実行。
+  - import文の Unicode 正確な行・列番号、構文、解決理由（internal / external / unresolved）、GitHub パーマリンクを含む証跡（**Explainable Dependency Graph**）を表示。
 - **正確なコミットスナップショット & キャッシュ**
   - 解析時点のコミット SHA（40 文字）を固定し、各ノードから GitHub ソースへ直接ジャンプ可能。同一 `(repository_id, commit_sha, analyzer_version)` の再リクエスト時は PostgreSQL キャッシュから即座に返却します。
 
@@ -207,12 +210,13 @@ go -C backend vet ./...
 go -C backend test -race -p 1 ./...
 
 # 2. 静的解析精度・スケールベンチマークスイートの実行
-go -C backend run ./cmd/eval
+go -C backend run ./cmd/evaluate # Python 静的解析評価スイート (17プロジェクト, 14 synthetic + 3 partial OSS)
+go -C backend run ./cmd/eval     # Go 静的解析 & Architecture Diff 評価スイート (Tarjan SCC & OSS)
 
 # 3. 実 PostgreSQL 16 統合テスト (Migration 000001〜000004 & Phase 6.5 全10項目E2E)
 TEST_DATABASE_URL="postgres://repoatlas:repoatlas@localhost:5432/repoatlas?sslmode=disable" go -C backend test -v -run "TestPostgresIntegration|TestE2E" ./internal/...
 
-# 4. Frontend 型チェック・ユニットテスト (Vitest 19テスト)・Production Build
+# 4. Frontend 型チェック・ユニットテスト (Vitest 20テスト)・Production Build
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 npm --prefix frontend run test

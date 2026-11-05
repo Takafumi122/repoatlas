@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-11-04T13:52:04.598817Z",
+  "generated_at": "2026-11-05T03:07:39.911608Z",
   "go_version": "go1.27.3",
   "num_cpu": 10,
   "overall_precision": 1,
   "overall_recall": 1,
   "overall_f1": 1,
   "avg_unresolved_rate": 0.0392156862745098,
-  "total_latency_ms": 4.638000000000002,
-  "peak_heap_alloc_bytes": 392648,
+  "total_latency_ms": 5.095,
+  "peak_heap_alloc_bytes": 431552,
   "projects": [
     {
       "name": "click",
@@ -24,10 +24,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 1.372,
-      "heap_alloc_bytes": 316072,
-      "total_alloc_bytes": 64992,
-      "sys_bytes": 12929288
+      "latency_ms": 1.403,
+      "heap_alloc_bytes": 333792,
+      "total_alloc_bytes": 67744,
+      "sys_bytes": 13191432
     },
     {
       "name": "itsdangerous",
@@ -44,9 +44,9 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 1.159,
-      "heap_alloc_bytes": 392648,
-      "total_alloc_bytes": 138552,
+      "latency_ms": 1.693,
+      "heap_alloc_bytes": 431552,
+      "total_alloc_bytes": 162184,
       "sys_bytes": 13519112
     },
     {
@@ -64,10 +64,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 1.166,
-      "heap_alloc_bytes": 381624,
-      "total_alloc_bytes": 123320,
-      "sys_bytes": 13519112
+      "latency_ms": 1.06,
+      "heap_alloc_bytes": 400032,
+      "total_alloc_bytes": 127112,
+      "sys_bytes": 13781256
     },
     {
       "name": "01_stdlib",
@@ -84,10 +84,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.063,
-      "heap_alloc_bytes": 263456,
-      "total_alloc_bytes": 8096,
-      "sys_bytes": 13519112
+      "latency_ms": 0.065,
+      "heap_alloc_bytes": 273152,
+      "total_alloc_bytes": 9216,
+      "sys_bytes": 13797640
     },
     {
       "name": "02_thirdparty",
@@ -104,10 +104,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.077,
-      "heap_alloc_bytes": 263832,
-      "total_alloc_bytes": 9312,
-      "sys_bytes": 13797640
+      "latency_ms": 0.071,
+      "heap_alloc_bytes": 274344,
+      "total_alloc_bytes": 10432,
+      "sys_bytes": 13814024
     },
     {
       "name": "03_relative_same",
@@ -124,9 +124,9 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.052,
-      "heap_alloc_bytes": 262768,
-      "total_alloc_bytes": 6632,
+      "latency_ms": 0.061,
+      "heap_alloc_bytes": 273472,
+      "total_alloc_bytes": 7960,
       "sys_bytes": 13814024
     },
     {
@@ -144,9 +144,9 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.055,
-      "heap_alloc_bytes": 262944,
-      "total_alloc_bytes": 6720,
+      "latency_ms": 0.06,
+      "heap_alloc_bytes": 273984,
+      "total_alloc_bytes": 8384,
       "sys_bytes": 13814024
     },
     {
@@ -164,9 +164,9 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.058,
-      "heap_alloc_bytes": 263112,
-      "total_alloc_bytes": 6800,
+      "latency_ms": 0.053,
+      "heap_alloc_bytes": 274064,
+      "total_alloc_bytes": 8544,
       "sys_bytes": 13814024
     },
     {
@@ -184,9 +184,9 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.065,
-      "heap_alloc_bytes": 266744,
-      "total_alloc_bytes": 9696,
+      "latency_ms": 0.069,
+      "heap_alloc_bytes": 277712,
+      "total_alloc_bytes": 11376,
       "sys_bytes": 13814024
     },
     {
@@ -204,10 +204,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.08,
-      "heap_alloc_bytes": 268416,
-      "total_alloc_bytes": 9544,
-      "sys_bytes": 13814024
+      "latency_ms": 0.077,
+      "heap_alloc_bytes": 280392,
+      "total_alloc_bytes": 11960,
+      "sys_bytes": 13830408
     },
     {
       "name": "08_multi_symbol",
@@ -225,9 +225,9 @@
       "unresolved_count": 0,
       "unresolved_rate": 0,
       "latency_ms": 0.077,
-      "heap_alloc_bytes": 267824,
-      "total_alloc_bytes": 9560,
-      "sys_bytes": 13814024
+      "heap_alloc_bytes": 279200,
+      "total_alloc_bytes": 11496,
+      "sys_bytes": 13846792
     },
     {
       "name": "09_conditional",
@@ -245,9 +245,9 @@
       "unresolved_count": 0,
       "unresolved_rate": 0,
       "latency_ms": 0.127,
-      "heap_alloc_bytes": 276416,
-      "total_alloc_bytes": 16792,
-      "sys_bytes": 13814024
+      "heap_alloc_bytes": 290032,
+      "total_alloc_bytes": 20808,
+      "sys_bytes": 13846792
     },
     {
       "name": "10_dynamic",
@@ -264,10 +264,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.067,
-      "heap_alloc_bytes": 264936,
-      "total_alloc_bytes": 6768,
-      "sys_bytes": 13814024
+      "latency_ms": 0.073,
+      "heap_alloc_bytes": 276280,
+      "total_alloc_bytes": 8352,
+      "sys_bytes": 13846792
     },
     {
       "name": "11_star_import",
@@ -284,10 +284,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.04,
-      "heap_alloc_bytes": 270184,
-      "total_alloc_bytes": 5976,
-      "sys_bytes": 13814024
+      "latency_ms": 0.041,
+      "heap_alloc_bytes": 275488,
+      "total_alloc_bytes": 7672,
+      "sys_bytes": 13846792
     },
     {
       "name": "12_shadowed",
@@ -304,10 +304,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.04,
-      "heap_alloc_bytes": 270128,
-      "total_alloc_bytes": 5840,
-      "sys_bytes": 13814024
+      "latency_ms": 0.039,
+      "heap_alloc_bytes": 274968,
+      "total_alloc_bytes": 7168,
+      "sys_bytes": 13846792
     },
     {
       "name": "13_circular",
@@ -324,10 +324,10 @@
       "f1_score": 1,
       "unresolved_count": 0,
       "unresolved_rate": 0,
-      "latency_ms": 0.035,
-      "heap_alloc_bytes": 271128,
-      "total_alloc_bytes": 6728,
-      "sys_bytes": 13814024
+      "latency_ms": 0.036,
+      "heap_alloc_bytes": 276736,
+      "total_alloc_bytes": 8808,
+      "sys_bytes": 13846792
     },
     {
       "name": "14_unresolved",
@@ -344,10 +344,10 @@
       "f1_score": 1,
       "unresolved_count": 2,
       "unresolved_rate": 0.6666666666666666,
-      "latency_ms": 0.105,
-      "heap_alloc_bytes": 278192,
-      "total_alloc_bytes": 12928,
-      "sys_bytes": 13830408,
+      "latency_ms": 0.09,
+      "heap_alloc_bytes": 283320,
+      "total_alloc_bytes": 14688,
+      "sys_bytes": 13846792,
       "unresolved_imports": [
         "mypkg/broken.py:2 (..outside.non_existent) - 相対モジュールが見つかりません: outside",
         "mypkg/broken.py:5 (mypkg.ghost_module.missing_symbol) - 内部トップレベルパッケージ配下ですが該当モジュールが見つかりません: mypkg.ghost_module"
