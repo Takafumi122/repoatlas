@@ -348,3 +348,94 @@ func TestExploration_LargeGraphScalabilityAndArchitectureView(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzeMultiSourceImpact(t *testing.T) {
+	// Graph:
+	// A imports B, B imports C, C imports D
+	// E imports B
+	// F imports G
+	// H imports D, and H imports C
+	rawFiles := []domain.SourceFile{
+		{Path: "app/a.py"},
+		{Path: "app/b.py"},
+		{Path: "app/c.py"},
+		{Path: "app/d.py"},
+		{Path: "app/e.py"},
+		{Path: "app/f.py"},
+		{Path: "app/g.py"},
+		{Path: "app/h.py"},
+	}
+	rawEdges := []Edge{
+		{SourcePath: "app/a.py", TargetPath: "app/b.py"},
+		{SourcePath: "app/b.py", TargetPath: "app/c.py"},
+		{SourcePath: "app/c.py", TargetPath: "app/d.py"},
+		{SourcePath: "app/e.py", TargetPath: "app/b.py"},
+		{SourcePath: "app/f.py", TargetPath: "app/g.py"},
+		{SourcePath: "app/h.py", TargetPath: "app/d.py"},
+		{SourcePath: "app/h.py", TargetPath: "app/c.py"},
+	}
+	files, edges := buildFilesAndEdges(rawFiles, rawEdges)
+
+	changedFiles := []domain.PullRequestFile{
+		{Path: "app/c.py", Status: domain.PRFileModified, IsPython: true, IsAnalyzed: true},
+		{Path: "app/g.py", Status: domain.PRFileModified, IsPython: true, IsAnalyzed: true},
+		{Path: "README.md", Status: domain.PRFileModified, IsPython: false, IsAnalyzed: false, UnanalyzedReason: "non_python_file"},
+		{Path: "app/old.py", Status: domain.PRFileRemoved, IsPython: true, IsAnalyzed: false, UnanalyzedReason: "file_removed_in_pr"},
+	}
+
+	result := AnalyzeMultiSourceImpact(files, edges, changedFiles, 10)
+
+	// Direct impacts:
+	// From c.py: b.py (depth 1), h.py (depth 1, because h imports c)
+	// From g.py: f.py (depth 1)
+	// Indirect impacts:
+	// From b.py: a.py (depth 2), e.py (depth 2)
+	// Total affected unique: 5 (b.py, h.py, f.py, a.py, e.py)
+	// Changed: 4
+	// Unanalyzed: 2 (README.md, old.py)
+	if result.Summary.ChangedFilesCount != 4 {
+		t.Errorf("expected 4 changed files, got %d", result.Summary.ChangedFilesCount)
+	}
+	if result.Summary.DirectImpactCount != 3 {
+		t.Errorf("expected 3 direct impact files (b, h, f), got %d", result.Summary.DirectImpactCount)
+	}
+	if result.Summary.IndirectImpactCount != 2 {
+		t.Errorf("expected 2 indirect impact files (a, e), got %d", result.Summary.IndirectImpactCount)
+	}
+	if result.Summary.TotalAffectedCount != 5 {
+		t.Errorf("expected 5 total affected, got %d", result.Summary.TotalAffectedCount)
+	}
+	if result.Summary.UnanalyzedFilesCount != 2 {
+		t.Errorf("expected 2 unanalyzed files, got %d", result.Summary.UnanalyzedFilesCount)
+	}
+	if result.Summary.AnalysisCompleteness != "partial" {
+		t.Errorf("expected partial completeness, got %s", result.Summary.AnalysisCompleteness)
+	}
+
+	// Verify representative path for a.py
+	var aFile *domain.PRAffectedFile
+	for i := range result.AffectedFiles {
+		if result.AffectedFiles[i].Path == "app/a.py" {
+			aFile = &result.AffectedFiles[i]
+			break
+		}
+	}
+	if aFile == nil {
+		t.Fatal("app/a.py not found in affected files")
+	}
+	if aFile.Depth != 2 || aFile.ImpactType != "indirect" {
+		t.Errorf("expected depth 2 indirect for a.py, got depth %d %s", aFile.Depth, aFile.ImpactType)
+	}
+	wantPath := []string{"app/c.py", "app/b.py", "app/a.py"}
+	if !reflect.DeepEqual(aFile.RepresentativePath, wantPath) {
+		t.Errorf("expected rep path %+v, got %+v", wantPath, aFile.RepresentativePath)
+	}
+
+	// Verify cycle safety:
+	// Add cycle: app/b.py -> app/a.py -> app/b.py
+	cycleEdges := append(edges, Edge{SourcePath: "app/b.py", TargetPath: "app/a.py"})
+	cycleResult := AnalyzeMultiSourceImpact(files, cycleEdges, changedFiles, 10)
+	if cycleResult.Summary.TotalAffectedCount != 5 {
+		t.Errorf("expected cycle not to loop infinitely or inflate count, got %d", cycleResult.Summary.TotalAffectedCount)
+	}
+}

@@ -1,0 +1,95 @@
+{
+  "repo": "pallets/itsdangerous",
+  "commit_sha": "e43bfeb5ca67414cc0c98f5c9e6bb97e59ff246e",
+  "description": "pallets/itsdangerous v2.2.0 core import graph",
+  "internal_edges": [
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/_json.py"
+    },
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/encoding.py"
+    },
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/exc.py"
+    },
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/serializer.py"
+    },
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/signer.py"
+    },
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/timed.py"
+    },
+    {
+      "source": "src/itsdangerous/__init__.py",
+      "target": "src/itsdangerous/url_safe.py"
+    },
+    {
+      "source": "src/itsdangerous/encoding.py",
+      "target": "src/itsdangerous/exc.py"
+    },
+    {
+      "source": "src/itsdangerous/signer.py",
+      "target": "src/itsdangerous/encoding.py"
+    },
+    {
+      "source": "src/itsdangerous/signer.py",
+      "target": "src/itsdangerous/exc.py"
+    },
+    {
+      "source": "src/itsdangerous/serializer.py",
+      "target": "src/itsdangerous/_json.py"
+    },
+    {
+      "source": "src/itsdangerous/serializer.py",
+      "target": "src/itsdangerous/encoding.py"
+    },
+    {
+      "source": "src/itsdangerous/serializer.py",
+      "target": "src/itsdangerous/exc.py"
+    },
+    {
+      "source": "src/itsdangerous/serializer.py",
+      "target": "src/itsdangerous/signer.py"
+    },
+    {
+      "source": "src/itsdangerous/timed.py",
+      "target": "src/itsdangerous/encoding.py"
+    },
+    {
+      "source": "src/itsdangerous/timed.py",
+      "target": "src/itsdangerous/exc.py"
+    },
+    {
+      "source": "src/itsdangerous/timed.py",
+      "target": "src/itsdangerous/serializer.py"
+    },
+    {
+      "source": "src/itsdangerous/timed.py",
+      "target": "src/itsdangerous/signer.py"
+    },
+    {
+      "source": "src/itsdangerous/url_safe.py",
+      "target": "src/itsdangerous/encoding.py"
+    },
+    {
+      "source": "src/itsdangerous/url_safe.py",
+      "target": "src/itsdangerous/exc.py"
+    },
+    {
+      "source": "src/itsdangerous/url_safe.py",
+      "target": "src/itsdangerous/serializer.py"
+    },
+    {
+      "source": "src/itsdangerous/url_safe.py",
+      "target": "src/itsdangerous/timed.py"
+    }
+  ]
+}

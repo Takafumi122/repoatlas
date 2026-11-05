@@ -26,6 +26,18 @@ func (f *failingGHClient) Resolve(_ context.Context, _, _ string) (githubclient.
 	return githubclient.RepositorySnapshot{}, f.err
 }
 
+func (f *failingGHClient) ResolveCommit(_ context.Context, _, _, _ string) (githubclient.RepositorySnapshot, error) {
+	return githubclient.RepositorySnapshot{}, f.err
+}
+
+func (f *failingGHClient) GetPullRequest(_ context.Context, _, _ string, _ int) (domain.PullRequestSnapshot, error) {
+	return domain.PullRequestSnapshot{}, f.err
+}
+
+func (f *failingGHClient) GetPullRequestFiles(_ context.Context, _, _ string, _ int, _ int) ([]domain.PullRequestFile, error) {
+	return nil, f.err
+}
+
 func (f *failingGHClient) DownloadArchive(_ context.Context, _ githubclient.RepositorySnapshot) (io.ReadCloser, error) {
 	return nil, f.err
 }
@@ -37,6 +49,18 @@ type slowZipGHClient struct {
 
 func (s *slowZipGHClient) Resolve(_ context.Context, _, _ string) (githubclient.RepositorySnapshot, error) {
 	return githubclient.RepositorySnapshot{}, nil
+}
+
+func (s *slowZipGHClient) ResolveCommit(_ context.Context, _, _, _ string) (githubclient.RepositorySnapshot, error) {
+	return githubclient.RepositorySnapshot{}, nil
+}
+
+func (s *slowZipGHClient) GetPullRequest(_ context.Context, _, _ string, _ int) (domain.PullRequestSnapshot, error) {
+	return domain.PullRequestSnapshot{}, nil
+}
+
+func (s *slowZipGHClient) GetPullRequestFiles(_ context.Context, _, _ string, _ int, _ int) ([]domain.PullRequestFile, error) {
+	return nil, nil
 }
 
 func (s *slowZipGHClient) DownloadArchive(ctx context.Context, _ githubclient.RepositorySnapshot) (io.ReadCloser, error) {
@@ -209,5 +233,128 @@ func TestWorker_HeartbeatAndGracefulShutdown(t *testing.T) {
 	}
 	if completedRun.Status != domain.StatusCompleted {
 		t.Fatalf("expected in-flight job to complete during graceful shutdown, got status=%s", completedRun.Status)
+	}
+}
+
+type mockPRGHClient struct {
+	prSnap   domain.PullRequestSnapshot
+	prFiles  []domain.PullRequestFile
+	zipBytes []byte
+}
+
+func (m *mockPRGHClient) Resolve(_ context.Context, _, _ string) (githubclient.RepositorySnapshot, error) {
+	return githubclient.RepositorySnapshot{
+		GitHubID:      m.prSnap.Repository.GitHubRepositoryID,
+		Owner:         m.prSnap.Repository.Owner,
+		Name:          m.prSnap.Repository.Name,
+		DefaultBranch: m.prSnap.Repository.DefaultBranch,
+		CommitSHA:     m.prSnap.HeadSHA,
+		HTMLURL:       m.prSnap.Repository.HTMLURL,
+	}, nil
+}
+
+func (m *mockPRGHClient) ResolveCommit(_ context.Context, _, _, commitSHA string) (githubclient.RepositorySnapshot, error) {
+	return githubclient.RepositorySnapshot{
+		GitHubID:      m.prSnap.Repository.GitHubRepositoryID,
+		Owner:         m.prSnap.Repository.Owner,
+		Name:          m.prSnap.Repository.Name,
+		DefaultBranch: m.prSnap.Repository.DefaultBranch,
+		CommitSHA:     commitSHA,
+		HTMLURL:       m.prSnap.Repository.HTMLURL,
+	}, nil
+}
+
+func (m *mockPRGHClient) GetPullRequest(_ context.Context, _, _ string, _ int) (domain.PullRequestSnapshot, error) {
+	return m.prSnap, nil
+}
+
+func (m *mockPRGHClient) GetPullRequestFiles(_ context.Context, _, _ string, _ int, _ int) ([]domain.PullRequestFile, error) {
+	return m.prFiles, nil
+}
+
+func (m *mockPRGHClient) DownloadArchive(_ context.Context, _ githubclient.RepositorySnapshot) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(m.zipBytes)), nil
+}
+
+func TestWorker_PRAnalysis(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+
+	// Prepare multi-file zip: app/main.py imports app/utils.py
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w1, _ := zw.Create("repo-head/app/utils.py")
+	_, _ = io.WriteString(w1, "def helper():\n    return 42\n")
+	w2, _ := zw.Create("repo-head/app/main.py")
+	_, _ = io.WriteString(w2, "from app.utils import helper\ndef run():\n    return helper()\n")
+	_ = zw.Close()
+
+	prSnap := domain.PullRequestSnapshot{
+		Repository: domain.Repository{
+			GitHubRepositoryID: 303,
+			Owner:              "org",
+			Name:               "repo",
+			DefaultBranch:      "main",
+			HTMLURL:            "https://github.com/org/repo",
+		},
+		PullNumber: 10,
+		Title:      "Update helper",
+		State:      "open",
+		BaseSHA:    "0000000000111111111122222222223333333333",
+		HeadSHA:    "1111111111222222222233333333334444444444",
+		BaseRef:    "main",
+		HeadRef:    "update-helper",
+	}
+
+	prFiles := []domain.PullRequestFile{
+		{
+			Path:       "app/utils.py",
+			Status:     domain.PRFileModified,
+			Additions:  2,
+			Deletions:  1,
+			Changes:    3,
+			IsPython:   true,
+			IsAnalyzed: true,
+		},
+	}
+
+	gh := &mockPRGHClient{
+		prSnap:   prSnap,
+		prFiles:  prFiles,
+		zipBytes: buf.Bytes(),
+	}
+
+	proc := NewProcessor(st, gh, analyzer.NewPythonAnalyzer(), ProcessorOptions{
+		AnalysisTimeout: 5 * time.Second,
+	})
+	worker := NewWorker(st, proc, 1, 10*time.Millisecond)
+
+	prAnalysis, cached, err := st.CreateOrGetPRAnalysis(ctx, prSnap, "v2.0.0")
+	if err != nil || cached {
+		t.Fatalf("CreateOrGetPRAnalysis error: cached=%v err=%v", cached, err)
+	}
+
+	claimed, err := worker.StepOnce(ctx)
+	if err != nil || !claimed {
+		t.Fatalf("StepOnce PR failed: claimed=%v err=%v", claimed, err)
+	}
+
+	completedPR, err := st.GetPRAnalysis(ctx, prAnalysis.ID)
+	if err != nil {
+		t.Fatalf("GetPRAnalysis error: %v", err)
+	}
+	if completedPR.Status != domain.StatusCompleted {
+		t.Fatalf("expected PR completed, got %s", completedPR.Status)
+	}
+	if completedPR.TotalAffectedCount != 1 || completedPR.DirectImpactCount != 1 {
+		t.Fatalf("expected 1 direct affected file (app/main.py), got total=%d direct=%d", completedPR.TotalAffectedCount, completedPR.DirectImpactCount)
+	}
+
+	impactPR, files, err := st.GetPRAnalysisImpact(ctx, prAnalysis.ID)
+	if err != nil {
+		t.Fatalf("GetPRAnalysisImpact error: %v", err)
+	}
+	if impactPR.ID != prAnalysis.ID || len(files) != 1 {
+		t.Fatalf("unexpected impact: files=%d", len(files))
 	}
 }

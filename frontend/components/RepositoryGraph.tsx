@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -11,7 +11,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import type { GraphResponse, GraphViewMode } from "@/lib/types";
+import type { GraphResponse, GraphViewMode, ImportReference, PRImpactResponse } from "@/lib/types";
+import { getAnalysisEvidence } from "@/lib/api";
 import {
   applyGraphVisualState,
   buildArchitectureGraph,
@@ -34,9 +35,10 @@ const nodeTypes = {
 
 interface RepositoryGraphProps {
   graph: GraphResponse;
+  prImpact?: PRImpactResponse | null;
 }
 
-export function RepositoryGraph({ graph }: RepositoryGraphProps) {
+export function RepositoryGraph({ graph, prImpact }: RepositoryGraphProps) {
   const guidedTour = useMemo(
     () => buildGuidedTour(graph.nodes, graph.edges, graph.guided_tour),
     [graph.nodes, graph.edges, graph.guided_tour]
@@ -68,6 +70,24 @@ export function RepositoryGraph({ graph }: RepositoryGraphProps) {
   const [impactHighlightActive, setImpactHighlightActive] =
     useState<boolean>(true);
   const [mobileTab, setMobileTab] = useState<"graph" | "details">("graph");
+  const [evidence, setEvidence] = useState<ImportReference[]>([]);
+
+  useEffect(() => {
+    if (!graph.analysis_id || graph.demo) return;
+    let ignore = false;
+    getAnalysisEvidence(graph.analysis_id)
+      .then((res) => {
+        if (!ignore && res && res.imports) {
+          setEvidence(res.imports);
+        }
+      })
+      .catch(() => {
+        // Continue if evidence not available
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [graph.analysis_id, graph.demo]);
 
   const filtered = useMemo(
     () =>
@@ -157,8 +177,42 @@ export function RepositoryGraph({ graph }: RepositoryGraphProps) {
     setMobileTab("details");
   };
 
+  const prFlowNodes = useMemo(() => {
+    if (!prImpact) return fileLayout.flowNodes;
+    const changedPaths = new Set(
+      prImpact.changed_files
+        .filter((cf) => cf.status !== "removed" && cf.is_analyzed)
+        .map((cf) => cf.path)
+    );
+    const affectedMap = new Map(
+      prImpact.affected_files.map((af) => [af.path, af])
+    );
+
+    return fileLayout.flowNodes.map((fn) => {
+      const filePath = fn.data.file.path;
+      const isChanged = changedPaths.has(filePath);
+      const affected = affectedMap.get(filePath);
+      const isUnaffected = !isChanged && !affected;
+
+      return {
+        ...fn,
+        data: {
+          ...fn.data,
+          isPRChanged: isChanged,
+          impactDepth: affected?.depth,
+          prVisualRole: isChanged
+            ? "changed"
+            : affected
+            ? affected.visual_role
+            : "unaffected",
+          isDimmed: fn.data.isDimmed || (impactHighlightActive && isUnaffected),
+        },
+      };
+    });
+  }, [fileLayout.flowNodes, prImpact, impactHighlightActive]);
+
   const activeNodes =
-    viewMode === "architecture" ? archLayout.flowNodes : fileLayout.flowNodes;
+    viewMode === "architecture" ? archLayout.flowNodes : prFlowNodes;
   const activeEdges =
     viewMode === "architecture" ? archLayout.flowEdges : fileLayout.flowEdges;
 
@@ -350,6 +404,7 @@ export function RepositoryGraph({ graph }: RepositoryGraphProps) {
               setSelectedNodeId(nodeId);
             }}
             warnings={graph.warnings}
+            importEvidence={evidence}
             onSelectNode={(id) => {
               if (viewMode !== "file") {
                 setViewMode("file");

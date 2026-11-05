@@ -9,6 +9,7 @@ import type {
   GraphViewMode,
   GuidedTourStep,
   ImpactAnalysisResult,
+  ImportReference,
 } from "@/lib/types";
 
 interface FileDetailsPanelProps {
@@ -29,6 +30,7 @@ interface FileDetailsPanelProps {
   onInspectFileFromArch: (nodeId: string) => void;
   warnings: string[];
   onSelectNode: (nodeId: string) => void;
+  importEvidence?: ImportReference[];
 }
 
 export function FileDetailsPanel({
@@ -49,6 +51,7 @@ export function FileDetailsPanel({
   onInspectFileFromArch,
   warnings,
   onSelectNode,
+  importEvidence = [],
 }: FileDetailsPanelProps) {
   const nodeById = new Map(allNodes.map((n) => [n.id, n]));
   const tourStep = selectedNode
@@ -280,51 +283,183 @@ export function FileDetailsPanel({
     );
   }
 
+  const isPackage = selectedNode.node_kind === "package";
+  const nodeEvidence = importEvidence.filter(
+    (ev) =>
+      ev.source_package === selectedNode.package_import_path ||
+      ev.source_path === selectedNode.path ||
+      (ev.source_file && ev.source_file === selectedNode.path)
+  );
+
   return (
     <aside className="details-panel" aria-label="ファイル詳細パネル">
       <div className="details-header">
         <div className="details-badges">
+          {isPackage && (
+            <span className="badge badge-package">Go Package</span>
+          )}
           {tourStep && (
             <span className="badge badge-tour">
               Tour Step #{tourStep.step} ({tourStep.role_label})
             </span>
           )}
           {selectedNode.is_entrypoint && (
-            <span className="badge badge-entrypoint">Entrypoint候補</span>
+            <span className="badge badge-entrypoint">
+              {isPackage ? "Entrypoint Package" : "Entrypoint候補"}
+            </span>
           )}
           {isRecommended && (
             <span className="badge badge-recommended">優先閲覧推奨 Top 5</span>
           )}
         </div>
-        <h3 className="details-filepath">{selectedNode.path}</h3>
+        <h3 className="details-filepath">
+          {isPackage ? `📦 ${selectedNode.package_name || selectedNode.path}` : selectedNode.path}
+        </h3>
+        {isPackage && (
+          <div className="pkg-meta-banner">
+            <div className="text-xs text-muted">
+              <strong>Import Path:</strong> <code>{selectedNode.package_import_path || selectedNode.path}</code>
+            </div>
+            {selectedNode.module_path && (
+              <div className="text-xs text-muted">
+                <strong>Module:</strong> <code>{selectedNode.module_path}</code>
+              </div>
+            )}
+            {selectedNode.directory_path && (
+              <div className="text-xs text-muted">
+                <strong>Directory:</strong> <code>{selectedNode.directory_path}</code>
+              </div>
+            )}
+          </div>
+        )}
         <a
           href={selectedNode.github_url}
           target="_blank"
           rel="noopener noreferrer"
           className="btn btn-primary btn-full"
         >
-          GitHubでソースコードを開く ↗
+          GitHubで{isPackage ? "パッケージディレクトリ" : "ソースコード"}を開く ↗
         </a>
       </div>
 
       <div className="stats-grid">
-        <div className="stat-box">
-          <span className="stat-label">関数定義数</span>
-          <span className="stat-value">{selectedNode.functions}</span>
-        </div>
-        <div className="stat-box">
-          <span className="stat-label">クラス定義数</span>
-          <span className="stat-value">{selectedNode.classes}</span>
-        </div>
-        <div className="stat-box">
-          <span className="stat-label">被依存数 (In)</span>
-          <span className="stat-value">{selectedNode.in_degree}</span>
-        </div>
-        <div className="stat-box">
-          <span className="stat-label">依存先数 (Out)</span>
-          <span className="stat-value">{selectedNode.out_degree}</span>
-        </div>
+        {isPackage ? (
+          <>
+            <div className="stat-box">
+              <span className="stat-label">ファイル数</span>
+              <span className="stat-value">
+                {selectedNode.files_count || (selectedNode.files ? selectedNode.files.length : 1)}
+              </span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">関数定義数</span>
+              <span className="stat-value">{selectedNode.functions}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">メソッド数</span>
+              <span className="stat-value">{selectedNode.methods_count ?? 0}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">型定義数</span>
+              <span className="stat-value">{selectedNode.types_count ?? selectedNode.classes}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">被依存Package</span>
+              <span className="stat-value">{selectedNode.in_degree}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">依存先Package</span>
+              <span className="stat-value">{selectedNode.out_degree}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="stat-box">
+              <span className="stat-label">関数定義数</span>
+              <span className="stat-value">{selectedNode.functions}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">クラス定義数</span>
+              <span className="stat-value">{selectedNode.classes}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">被依存数 (In)</span>
+              <span className="stat-value">{selectedNode.in_degree}</span>
+            </div>
+            <div className="stat-box">
+              <span className="stat-label">依存先数 (Out)</span>
+              <span className="stat-value">{selectedNode.out_degree}</span>
+            </div>
+          </>
+        )}
       </div>
+
+      {isPackage && selectedNode.files && selectedNode.files.length > 0 && (
+        <div className="details-section" data-testid="package-files-list">
+          <h4>所属Goファイル一覧 ({selectedNode.files.length}件)</h4>
+          <ul className="dep-list">
+            {selectedNode.files.map((f) => (
+              <li key={f.path} className="dep-item">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{f.path}</span>
+                  {f.build_tags && (
+                    <span className="badge badge-tour" title={`Build constraints: ${f.build_tags}`}>
+                      tags: {f.build_tags}
+                    </span>
+                  )}
+                </div>
+                <div className="rec-reason">
+                  関数: {f.functions} / メソッド: {f.methods} / 型: {f.types}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {nodeEvidence.length > 0 && (
+        <div className="details-section" data-testid="import-evidence-section">
+          <h4>Import根拠・証跡 ({nodeEvidence.length}件)</h4>
+          <p className="muted-text" style={{ fontSize: "0.8rem", marginBottom: "0.5rem" }}>
+            静的解析によって抽出された依存関係の根拠となるimport文です。
+          </p>
+          <ul className="dep-list">
+            {nodeEvidence.map((ev, idx) => (
+              <li key={idx} className="dep-item">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                    {ev.source_file || ev.source_path}:{ev.line_number}
+                  </span>
+                  <span
+                    className={`badge ${
+                      ev.classification === "internal"
+                        ? "badge-tour"
+                        : ev.classification === "external"
+                        ? "badge-recommended"
+                        : "badge-entrypoint"
+                    }`}
+                  >
+                    {ev.classification}
+                  </span>
+                </div>
+                <pre style={{ margin: "4px 0", padding: "4px", background: "rgba(0,0,0,0.05)", borderRadius: "4px", fontSize: "0.8rem", overflowX: "auto" }}>
+                  <code>{ev.import_text}</code>
+                </pre>
+                {ev.target_package && (
+                  <div className="rec-reason">
+                    Target: {ev.target_package} {ev.alias ? `(alias ${ev.alias})` : ""}
+                  </div>
+                )}
+                {ev.build_constraints && ev.build_constraints !== "none" && (
+                  <div style={{ fontSize: "0.75rem", color: "#d97706" }}>
+                    Build tags: {ev.build_constraints}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="details-section">
         <h4>

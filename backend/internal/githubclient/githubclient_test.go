@@ -372,3 +372,160 @@ func assertAppErrorCode(t *testing.T, err error, code domain.ErrorCode) {
 		t.Fatalf("expected error code %s, got %s (%v)", code, appErr.Code, appErr)
 	}
 }
+
+func TestParsePullRequestURL(t *testing.T) {
+	validCases := []struct {
+		name       string
+		input      string
+		wantOwn    string
+		wantRepo   string
+		wantNumber int
+		wantHTML   string
+	}{
+		{
+			name:       "standard PR url",
+			input:      "https://github.com/psf/requests/pull/123",
+			wantOwn:    "psf",
+			wantRepo:   "requests",
+			wantNumber: 123,
+			wantHTML:   "https://github.com/psf/requests/pull/123",
+		},
+		{
+			name:       "PR url with trailing slash",
+			input:      "https://github.com/pallets/flask/pull/456/",
+			wantOwn:    "pallets",
+			wantRepo:   "flask",
+			wantNumber: 456,
+			wantHTML:   "https://github.com/pallets/flask/pull/456",
+		},
+	}
+
+	for _, tc := range validCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParsePullRequestURL(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Owner != tc.wantOwn || got.Repo != tc.wantRepo || got.PullNumber != tc.wantNumber || got.HTMLURL != tc.wantHTML {
+				t.Errorf("got %+v, want owner=%s repo=%s number=%d html=%s", got, tc.wantOwn, tc.wantRepo, tc.wantNumber, tc.wantHTML)
+			}
+		})
+	}
+
+	invalidCases := []struct {
+		name  string
+		input string
+		code  domain.ErrorCode
+	}{
+		{"empty", "", domain.ErrCodeInvalidPullRequestURL},
+		{"regular repo url", "https://github.com/psf/requests", domain.ErrCodeInvalidPullRequestURL},
+		{"pull without number", "https://github.com/psf/requests/pull", domain.ErrCodeInvalidPullRequestURL},
+		{"non-numeric pull number", "https://github.com/psf/requests/pull/abc", domain.ErrCodeInvalidPullRequestURL},
+		{"negative pull number", "https://github.com/psf/requests/pull/-1", domain.ErrCodeInvalidPullRequestURL},
+		{"zero pull number", "https://github.com/psf/requests/pull/0", domain.ErrCodeInvalidPullRequestURL},
+		{"with query params", "https://github.com/psf/requests/pull/1?tab=files", domain.ErrCodeInvalidPullRequestURL},
+		{"with hash fragment", "https://github.com/psf/requests/pull/1#issuecomment-1", domain.ErrCodeInvalidPullRequestURL},
+		{"non-github host", "https://gitlab.com/psf/requests/pull/1", domain.ErrCodeInvalidPullRequestURL},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParsePullRequestURL(tc.input)
+			assertAppErrorCode(t, err, tc.code)
+		})
+	}
+}
+
+func TestRESTClient_PullRequest(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/psf/requests/pulls/123", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{
+			"number": 123,
+			"title": "Fix connection pool",
+			"state": "open",
+			"base": {
+				"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"ref": "main",
+				"repo": {
+					"id": 1001,
+					"name": "requests",
+					"default_branch": "main",
+					"private": false,
+					"owner": {"login": "psf"}
+				}
+			},
+			"head": {
+				"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"ref": "fix-pool",
+				"repo": {
+					"id": 2002,
+					"name": "requests",
+					"default_branch": "main",
+					"private": false,
+					"owner": {"login": "contributor"}
+				}
+			}
+		}`)
+	})
+	mux.HandleFunc("/repos/psf/requests/pulls/123/files", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `[
+			{
+				"filename": "requests/adapters.py",
+				"status": "modified",
+				"additions": 10,
+				"deletions": 2,
+				"changes": 12
+			},
+			{
+				"filename": "README.md",
+				"status": "modified",
+				"additions": 1,
+				"deletions": 0,
+				"changes": 1
+			},
+			{
+				"filename": "requests/old_module.py",
+				"status": "removed",
+				"additions": 0,
+				"deletions": 50,
+				"changes": 50
+			}
+		]`)
+	})
+
+	client := newTestRESTClient(RESTClientOptions{}, mux.ServeHTTP)
+
+	ctx := context.Background()
+	snap, err := client.GetPullRequest(ctx, "psf", "requests", 123)
+	if err != nil {
+		t.Fatalf("unexpected error getting PR: %v", err)
+	}
+	if snap.PullNumber != 123 || snap.BaseSHA != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || snap.HeadSHA != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Errorf("unexpected snapshot: %+v", snap)
+	}
+
+	files, err := client.GetPullRequestFiles(ctx, "psf", "requests", 123, 100)
+	if err != nil {
+		t.Fatalf("unexpected error getting PR files: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(files))
+	}
+
+	// Verify Python analyzed
+	if !files[0].IsPython || !files[0].IsAnalyzed {
+		t.Errorf("file 0 expected python and analyzed, got %+v", files[0])
+	}
+	// Verify non-Python unanalyzed
+	if files[1].IsPython || files[1].IsAnalyzed || files[1].UnanalyzedReason != "non_python_file" {
+		t.Errorf("file 1 expected non_python_file, got %+v", files[1])
+	}
+	// Verify removed Python unanalyzed with reason
+	if !files[2].IsPython || files[2].IsAnalyzed || files[2].UnanalyzedReason != "file_removed_in_pr" {
+		t.Errorf("file 2 expected file_removed_in_pr, got %+v", files[2])
+	}
+}

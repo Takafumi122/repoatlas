@@ -79,9 +79,19 @@ func BuildArchitectureGraph(files []domain.SourceFile, edges []Edge) Architectur
 	fileByPath := make(map[string]domain.SourceFile, len(files))
 	dirNodesMap := make(map[string]*ArchitectureNode)
 
+	getDirectory := func(f domain.SourceFile) string {
+		if f.Language == "go" || f.NodeKind == "package" {
+			if f.DirectoryPath != "" && f.DirectoryPath != "." {
+				return f.DirectoryPath
+			}
+			return "(root)"
+		}
+		return DirectoryForPath(f.Path)
+	}
+
 	for _, f := range files {
 		fileByPath[f.Path] = f
-		dir := DirectoryForPath(f.Path)
+		dir := getDirectory(f)
 		node, ok := dirNodesMap[dir]
 		if !ok {
 			node = &ArchitectureNode{
@@ -97,8 +107,16 @@ func BuildArchitectureGraph(files []domain.SourceFile, edges []Edge) Architectur
 		if f.IsEntrypoint {
 			node.EntrypointCount++
 		}
+		nodeID := domain.NodeIDForPath(f.Path)
+		if f.Language == "go" || f.NodeKind == "package" {
+			if f.PackageImportPath != "" {
+				nodeID = domain.NodeIDForPackage(f.PackageImportPath)
+			} else {
+				nodeID = domain.NodeIDForPackage(f.Path)
+			}
+		}
 		node.Files = append(node.Files, ArchitectureFileSummary{
-			NodeID:          domain.NodeIDForPath(f.Path),
+			NodeID:          nodeID,
 			Path:            f.Path,
 			Functions:       f.FunctionsCount,
 			Classes:         f.ClassesCount,
@@ -120,10 +138,12 @@ func BuildArchitectureGraph(files []domain.SourceFile, edges []Edge) Architectur
 		if e.SourcePath == "" || e.TargetPath == "" || e.SourcePath == e.TargetPath {
 			continue
 		}
-		if _, ok := fileByPath[e.SourcePath]; !ok {
+		srcFile, ok := fileByPath[e.SourcePath]
+		if !ok {
 			continue
 		}
-		if _, ok := fileByPath[e.TargetPath]; !ok {
+		dstFile, ok := fileByPath[e.TargetPath]
+		if !ok {
 			continue
 		}
 		fileKey := [2]string{e.SourcePath, e.TargetPath}
@@ -132,10 +152,12 @@ func BuildArchitectureGraph(files []domain.SourceFile, edges []Edge) Architectur
 		}
 		seenFileEdge[fileKey] = true
 
-		srcDir := DirectoryForPath(e.SourcePath)
-		dstDir := DirectoryForPath(e.TargetPath)
+		srcDir := getDirectory(srcFile)
+		dstDir := getDirectory(dstFile)
 		if srcDir == dstDir {
-			dirNodesMap[srcDir].InternalEdgeCount++
+			if n, exists := dirNodesMap[srcDir]; exists {
+				n.InternalEdgeCount++
+			}
 			continue
 		}
 
@@ -152,12 +174,14 @@ func BuildArchitectureGraph(files []domain.SourceFile, edges []Edge) Architectur
 		}
 		weight := len(samples)
 
-		srcNode := dirNodesMap[pair.src]
-		dstNode := dirNodesMap[pair.dst]
-		srcNode.OutDegree++
-		srcNode.OutgoingWeight += weight
-		dstNode.InDegree++
-		dstNode.IncomingWeight += weight
+		srcNode, srcOk := dirNodesMap[pair.src]
+		dstNode, dstOk := dirNodesMap[pair.dst]
+		if srcOk && dstOk {
+			srcNode.OutDegree++
+			srcNode.OutgoingWeight += weight
+			dstNode.InDegree++
+			dstNode.IncomingWeight += weight
+		}
 
 		archEdges = append(archEdges, ArchitectureEdge{
 			ID:              fmt.Sprintf("%s->%s", DirectoryNodeID(pair.src), DirectoryNodeID(pair.dst)),

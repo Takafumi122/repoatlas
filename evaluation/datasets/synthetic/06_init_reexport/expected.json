@@ -1,0 +1,16 @@
+{
+  "name": "06_init_reexport",
+  "description": "__init__.py re-exports",
+  "internal_edges": [
+    {
+      "source": "pkg/__init__.py",
+      "target": "pkg/sub.py"
+    },
+    {
+      "source": "app.py",
+      "target": "pkg/__init__.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

@@ -1,0 +1,11 @@
+{
+  "name": "02_thirdparty",
+  "description": "Third-party package imports",
+  "internal_edges": [],
+  "external_imports": [
+    "requests",
+    "flask",
+    "pydantic.v1"
+  ],
+  "unresolved_imports": []
+}

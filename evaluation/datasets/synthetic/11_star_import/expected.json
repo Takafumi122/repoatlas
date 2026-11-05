@@ -1,0 +1,12 @@
+{
+  "name": "11_star_import",
+  "description": "Star wildcard imports (from x import *)",
+  "internal_edges": [
+    {
+      "source": "consumer.py",
+      "target": "provider.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

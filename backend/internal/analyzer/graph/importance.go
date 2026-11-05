@@ -59,7 +59,11 @@ func SelectRecommendedFileIDs(files []domain.SourceFile, topN int) []string {
 
 	ids := make([]string, len(sorted))
 	for i, f := range sorted {
-		ids[i] = domain.NodeIDForPath(f.Path)
+		if f.Language == "go" || f.NodeKind == "package" {
+			ids[i] = domain.NodeIDForPackage(f.PackageImportPath)
+		} else {
+			ids[i] = domain.NodeIDForPath(f.Path)
+		}
 	}
 	return ids
 }

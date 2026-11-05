@@ -20,11 +20,27 @@ type Store interface {
 	CountActiveAnalyses(ctx context.Context) (int, error)
 	GetAnalysis(ctx context.Context, id string) (domain.AnalysisRun, error)
 	GetAnalysisGraph(ctx context.Context, id string) (domain.AnalysisRun, []domain.SourceFile, []graph.Edge, error)
+	GetImportReferences(ctx context.Context, analysisID string) ([]domain.ImportReference, error)
 	ClaimNextAnalysis(ctx context.Context, leaseOwner string, leaseDuration time.Duration) (*domain.AnalysisRun, bool, error)
 	ExtendAnalysisLease(ctx context.Context, id string, leaseOwner string, leaseDuration time.Duration) error
 	UpdateAnalysisStage(ctx context.Context, id string, leaseOwner string, stage domain.AnalysisStage, leaseDuration time.Duration) error
 	CompleteAnalysis(ctx context.Context, id string, leaseOwner string, output graph.BuildOutput) error
 	FailAnalysis(ctx context.Context, id string, leaseOwner string, code string, message string) error
+	CreateOrGetArchitectureDiff(ctx context.Context, snap githubclient.RepositorySnapshot, baseSHA, headSHA, analyzerVersion, diffAlgVersion string) (domain.ArchitectureDiffAnalysis, bool, error)
+	GetArchitectureDiff(ctx context.Context, id string) (domain.ArchitectureDiffAnalysis, error)
+	CompleteArchitectureDiff(ctx context.Context, id string, leaseOwner string, summary domain.DiffSummary) error
+	FailArchitectureDiff(ctx context.Context, id string, leaseOwner string, code string, message string) error
+
+	// Phase 5 additions:
+	GetImportEvidences(ctx context.Context, analysisID string, sourcePath, targetPath string, unresolvedOnly bool) ([]domain.ImportEvidence, error)
+	CreateOrGetPRAnalysis(ctx context.Context, snap domain.PullRequestSnapshot, analyzerVersion string) (domain.PullRequestAnalysis, bool, error)
+	GetPRAnalysis(ctx context.Context, id string) (domain.PullRequestAnalysis, error)
+	ClaimNextPRAnalysis(ctx context.Context, leaseOwner string, leaseDuration time.Duration) (*domain.PullRequestAnalysis, bool, error)
+	ExtendPRAnalysisLease(ctx context.Context, id string, leaseOwner string, leaseDuration time.Duration) error
+	UpdatePRAnalysisStage(ctx context.Context, id string, leaseOwner string, stage domain.AnalysisStage, leaseDuration time.Duration) error
+	CompletePRAnalysis(ctx context.Context, id string, leaseOwner string, headAnalysisID string, files []domain.PullRequestFile, summary domain.PRImpactSummary) error
+	FailPRAnalysis(ctx context.Context, id string, leaseOwner string, code string, message string) error
+	GetPRAnalysisImpact(ctx context.Context, id string) (domain.PullRequestAnalysis, []domain.PullRequestFile, error)
 }
 
 type PostgresStore struct {

@@ -8,14 +8,19 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/repoatlas/repoatlas/backend/internal/analyzer/diff"
 	"github.com/repoatlas/repoatlas/backend/internal/analyzer/graph"
 	"github.com/repoatlas/repoatlas/backend/internal/domain"
 	"github.com/repoatlas/repoatlas/backend/internal/githubclient"
 	"github.com/repoatlas/repoatlas/backend/internal/store"
 )
+
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 const maxRequestBodyBytes = 16 * 1024 // 16 KiB
 
@@ -142,10 +147,25 @@ func (h *Handler) HandleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 		completedAtStr = &s
 	}
 
+	lang := run.Language
+	if lang == "" {
+		lang = "python"
+	}
+	granularity := run.GraphGranularity
+	if granularity == "" {
+		if lang == "go" {
+			granularity = "package"
+		} else {
+			granularity = "file"
+		}
+	}
+
 	resp := AnalysisStatusResponse{
-		ID:     run.ID,
-		Status: run.Status,
-		Stage:  run.Stage,
+		ID:               run.ID,
+		Status:           run.Status,
+		Stage:            run.Stage,
+		Language:         lang,
+		GraphGranularity: granularity,
 		Repository: RepositorySummary{
 			Owner:   run.Repository.Owner,
 			Name:    run.Repository.Name,
@@ -171,24 +191,76 @@ func (h *Handler) HandleGetAnalysisGraph(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	isGo := run.Language == "go" || (len(files) > 0 && (files[0].Language == "go" || files[0].NodeKind == "package"))
+	lang := "python"
+	granularity := "file"
+	if isGo {
+		lang = "go"
+		granularity = "package"
+	}
+
 	nodes := make([]GraphNode, len(files))
 	for i, f := range files {
-		ghURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s",
-			run.Repository.Owner,
-			run.Repository.Name,
-			run.CommitSHA,
-			f.Path,
-		)
+		var nodeID, ghURL string
+		if isGo {
+			pkgPath := f.PackageImportPath
+			if pkgPath == "" {
+				pkgPath = f.Path
+			}
+			nodeID = domain.NodeIDForPackage(pkgPath)
+			if f.DirectoryPath == "" || f.DirectoryPath == "." {
+				ghURL = fmt.Sprintf("https://github.com/%s/%s/tree/%s",
+					run.Repository.Owner,
+					run.Repository.Name,
+					run.CommitSHA,
+				)
+			} else {
+				ghURL = fmt.Sprintf("https://github.com/%s/%s/tree/%s/%s",
+					run.Repository.Owner,
+					run.Repository.Name,
+					run.CommitSHA,
+					f.DirectoryPath,
+				)
+			}
+		} else {
+			nodeID = domain.NodeIDForPath(f.Path)
+			ghURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s",
+				run.Repository.Owner,
+				run.Repository.Name,
+				run.CommitSHA,
+				f.Path,
+			)
+		}
+
+		nodeKind := f.NodeKind
+		if nodeKind == "" {
+			if isGo {
+				nodeKind = "package"
+			} else {
+				nodeKind = "file"
+			}
+		}
+
 		nodes[i] = GraphNode{
-			ID:              domain.NodeIDForPath(f.Path),
-			Path:            f.Path,
-			Functions:       f.FunctionsCount,
-			Classes:         f.ClassesCount,
-			InDegree:        f.InDegree,
-			OutDegree:       f.OutDegree,
-			IsEntrypoint:    f.IsEntrypoint,
-			ImportanceScore: f.ImportanceScore,
-			GitHubURL:       ghURL,
+			ID:                nodeID,
+			Path:              f.Path,
+			NodeKind:          nodeKind,
+			Language:          lang,
+			Functions:         f.FunctionsCount,
+			Classes:           f.ClassesCount,
+			InDegree:          f.InDegree,
+			OutDegree:         f.OutDegree,
+			IsEntrypoint:      f.IsEntrypoint,
+			ImportanceScore:   f.ImportanceScore,
+			GitHubURL:         ghURL,
+			ModulePath:        f.ModulePath,
+			PackageImportPath: f.PackageImportPath,
+			DirectoryPath:     f.DirectoryPath,
+			PackageName:       f.PackageName,
+			FilesCount:        f.FilesCount,
+			MethodsCount:      f.MethodsCount,
+			TypesCount:        f.TypesCount,
+			Files:             f.Files,
 		}
 	}
 
@@ -199,9 +271,19 @@ func (h *Handler) HandleGetAnalysisGraph(w http.ResponseWriter, r *http.Request)
 		if kind == "" {
 			kind = "import"
 		}
+
+		var srcID, dstID string
+		if isGo {
+			srcID = domain.NodeIDForPackage(e.SourcePath)
+			dstID = domain.NodeIDForPackage(e.TargetPath)
+		} else {
+			srcID = domain.NodeIDForPath(e.SourcePath)
+			dstID = domain.NodeIDForPath(e.TargetPath)
+		}
+
 		graphEdges[i] = GraphEdge{
-			Source: domain.NodeIDForPath(e.SourcePath),
-			Target: domain.NodeIDForPath(e.TargetPath),
+			Source: srcID,
+			Target: dstID,
 			Kind:   kind,
 		}
 		internalEdges[i] = graph.Edge{
@@ -216,7 +298,9 @@ func (h *Handler) HandleGetAnalysisGraph(w http.ResponseWriter, r *http.Request)
 	archGraph := graph.BuildArchitectureGraph(files, internalEdges)
 
 	resp := GraphResponse{
-		AnalysisID: run.ID,
+		AnalysisID:       run.ID,
+		Language:         lang,
+		GraphGranularity: granularity,
 		Repository: RepositorySummary{
 			Owner:   run.Repository.Owner,
 			Name:    run.Repository.Name,
@@ -459,6 +543,503 @@ func (h *Handler) HandleGetDemoGraph(w http.ResponseWriter, _ *http.Request) {
 			"Demo dataset (bundled static fixture). Real GitHub analysis results may vary.",
 			"Static import graph; dynamic imports are not included.",
 		},
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleCreatePRAnalysis(w http.ResponseWriter, r *http.Request) {
+	if h.rateLimiter != nil {
+		clientIP := h.ipExtractor.ClientIP(r)
+		allowed, retryAfter := h.rateLimiter.Allow(clientIP)
+		if !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+			writeError(w, domain.NewAppError(
+				domain.ErrCodeRateLimited,
+				http.StatusTooManyRequests,
+				fmt.Sprintf("解析リクエストのレート制限に達しました（%d秒後に再試行してください）", retryAfter),
+				nil,
+			))
+			return
+		}
+	}
+
+	var req CreatePRAnalysisRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, domain.NewAppError(domain.ErrCodeInvalidPullRequestURL, http.StatusBadRequest, "リクエストJSONが不正です", err))
+		return
+	}
+
+	parsedURL, err := githubclient.ParsePullRequestURL(req.URL)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	resolveCtx, cancel := context.WithTimeout(r.Context(), h.resolveTimeout)
+	defer cancel()
+
+	snap, err := h.ghClient.GetPullRequest(resolveCtx, parsedURL.Owner, parsedURL.Repo, parsedURL.PullNumber)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	pr, cached, err := h.store.CreateOrGetPRAnalysis(r.Context(), snap, h.analyzerVersion)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	status := http.StatusAccepted
+	if cached && pr.Status == domain.StatusCompleted {
+		status = http.StatusOK
+	}
+
+	writeJSON(w, status, CreatePRAnalysisResponse{
+		PRAnalysisID: pr.ID,
+		Status:       pr.Status,
+		Cached:       cached,
+	})
+}
+
+func (h *Handler) HandleGetPRAnalysis(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	pr, err := h.store.GetPRAnalysis(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	var completedAtStr *string
+	if pr.CompletedAt != nil {
+		s := pr.CompletedAt.UTC().Format(time.RFC3339)
+		completedAtStr = &s
+	}
+
+	resp := PRAnalysisStatusResponse{
+		ID:     pr.ID,
+		Status: pr.Status,
+		Stage:  pr.Stage,
+		Repository: RepositorySummary{
+			Owner:   pr.Repository.Owner,
+			Name:    pr.Repository.Name,
+			HTMLURL: pr.Repository.HTMLURL,
+		},
+		PullNumber:     pr.PullNumber,
+		Title:          pr.Title,
+		State:          pr.State,
+		BaseSHA:        pr.BaseSHA,
+		HeadSHA:        pr.HeadSHA,
+		BaseRef:        pr.BaseRef,
+		HeadRef:        pr.HeadRef,
+		HeadAnalysisID: pr.HeadAnalysisID,
+		Error: AnalysisErrorField{
+			Code:    pr.ErrorCode,
+			Message: pr.ErrorMessage,
+		},
+		Summary: domain.PRImpactSummary{
+			ChangedFilesCount:    pr.ChangedFilesCount,
+			DirectImpactCount:    pr.DirectImpactCount,
+			IndirectImpactCount:  pr.IndirectImpactCount,
+			TotalAffectedCount:   pr.TotalAffectedCount,
+			UnanalyzedFilesCount: pr.UnanalyzedFilesCount,
+			AnalysisCompleteness: pr.AnalysisCompleteness,
+		},
+		CreatedAt:   pr.CreatedAt.UTC().Format(time.RFC3339),
+		CompletedAt: completedAtStr,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleGetPRAnalysisImpact(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	pr, files, err := h.store.GetPRAnalysisImpact(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	if pr.Status != domain.StatusCompleted {
+		writeError(w, domain.NewAppError(
+			domain.ErrCodeAnalysisNotReady,
+			http.StatusConflict,
+			"PR影響解析はまだ完了していません",
+			nil,
+		))
+		return
+	}
+
+	if pr.HeadAnalysisID == nil {
+		writeError(w, domain.NewAppError(
+			domain.ErrCodeInternalError,
+			http.StatusInternalServerError,
+			"HEADコミットの解析データが見つかりません",
+			nil,
+		))
+		return
+	}
+
+	_, headFiles, headEdges, err := h.store.GetAnalysisGraph(r.Context(), *pr.HeadAnalysisID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	impactResult := graph.AnalyzeMultiSourceImpact(headFiles, headEdges, files, 100)
+
+	var unanalyzed []domain.PullRequestFile
+	for _, f := range files {
+		if !f.IsAnalyzed {
+			unanalyzed = append(unanalyzed, f)
+		}
+	}
+	if unanalyzed == nil {
+		unanalyzed = []domain.PullRequestFile{}
+	}
+
+	resp := PRImpactResponse{
+		PRAnalysisID:   pr.ID,
+		HeadAnalysisID: *pr.HeadAnalysisID,
+		Repository: RepositorySummary{
+			Owner:   pr.Repository.Owner,
+			Name:    pr.Repository.Name,
+			HTMLURL: pr.Repository.HTMLURL,
+		},
+		PullNumber:      pr.PullNumber,
+		Title:           pr.Title,
+		BaseSHA:         pr.BaseSHA,
+		HeadSHA:         pr.HeadSHA,
+		Summary:         impactResult.Summary,
+		ChangedFiles:    files,
+		AffectedFiles:   impactResult.AffectedFiles,
+		AffectedEdges:   impactResult.AffectedEdges,
+		UnanalyzedFiles: unanalyzed,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleGetAnalysisEvidence(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sourcePath := r.URL.Query().Get("source_path")
+	targetPath := r.URL.Query().Get("target_path")
+	unresolvedOnly := r.URL.Query().Get("unresolved_only") == "true"
+
+	evidences, err := h.store.GetImportEvidences(r.Context(), id, sourcePath, targetPath, unresolvedOnly)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	refs, _ := h.store.GetImportReferences(r.Context(), id)
+
+	writeJSON(w, http.StatusOK, EvidenceResponse{
+		AnalysisID: id,
+		Count:      len(evidences),
+		Evidences:  evidences,
+		Imports:    refs,
+	})
+}
+
+func (h *Handler) HandleCreateArchitectureDiff(w http.ResponseWriter, r *http.Request) {
+	if h.rateLimiter != nil {
+		clientIP := h.ipExtractor.ClientIP(r)
+		allowed, retryAfter := h.rateLimiter.Allow(clientIP)
+		if !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+			writeError(w, domain.NewAppError(
+				domain.ErrCodeRateLimited,
+				http.StatusTooManyRequests,
+				fmt.Sprintf("解析リクエストのレート制限に達しました（%d秒後に再試行してください）", retryAfter),
+				nil,
+			))
+			return
+		}
+	}
+
+	var req CreateArchitectureDiffRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, domain.NewAppError(domain.ErrCodeInvalidRepositoryURL, http.StatusBadRequest, "リクエストJSONが不正です", err))
+		return
+	}
+
+	baseSHA := strings.TrimSpace(req.BaseSHA)
+	headSHA := strings.TrimSpace(req.HeadSHA)
+	if !commitSHAPattern.MatchString(baseSHA) || !commitSHAPattern.MatchString(headSHA) {
+		writeError(w, domain.NewAppError(domain.ErrCodeInvalidRepositoryURL, http.StatusBadRequest, "BASEおよびHEADコミットSHAは40文字の16進数で指定してください", nil))
+		return
+	}
+
+	parsedURL, err := githubclient.ParseRepositoryURL(req.RepositoryURL)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	resolveCtx, cancel := context.WithTimeout(r.Context(), h.resolveTimeout)
+	defer cancel()
+
+	snap, err := h.ghClient.Resolve(resolveCtx, parsedURL.Owner, parsedURL.Repo)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Trigger or get base snapshot analysis
+	baseSnap := snap
+	baseSnap.CommitSHA = baseSHA
+	_, _, err = h.store.CreateOrGetAnalysis(r.Context(), baseSnap, h.analyzerVersion)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Trigger or get head snapshot analysis
+	headSnap := snap
+	headSnap.CommitSHA = headSHA
+	_, _, err = h.store.CreateOrGetAnalysis(r.Context(), headSnap, h.analyzerVersion)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	diffAnalysis, cached, err := h.store.CreateOrGetArchitectureDiff(r.Context(), snap, baseSHA, headSHA, h.analyzerVersion, "v1.0.0")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	status := http.StatusAccepted
+	if cached && diffAnalysis.Status == domain.DiffStatusCompleted {
+		status = http.StatusOK
+	}
+
+	writeJSON(w, status, CreateArchitectureDiffResponse{
+		DiffID: diffAnalysis.ID,
+		Status: diffAnalysis.Status,
+		Cached: cached,
+	})
+}
+
+func (h *Handler) HandleGetArchitectureDiff(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	diffAnalysis, err := h.store.GetArchitectureDiff(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// If queued or running, check if underlying base & head runs are now completed
+	if diffAnalysis.Status != domain.DiffStatusCompleted && diffAnalysis.Status != domain.DiffStatusFailed {
+		baseSnap := githubclient.RepositorySnapshot{
+			GitHubID:      diffAnalysis.Repository.GitHubRepositoryID,
+			Owner:         diffAnalysis.Repository.Owner,
+			Name:          diffAnalysis.Repository.Name,
+			DefaultBranch: diffAnalysis.Repository.DefaultBranch,
+			HTMLURL:       diffAnalysis.Repository.HTMLURL,
+			CommitSHA:     diffAnalysis.BaseSHA,
+		}
+		headSnap := baseSnap
+		headSnap.CommitSHA = diffAnalysis.HeadSHA
+
+		baseRun, _, bErr := h.store.CreateOrGetAnalysis(r.Context(), baseSnap, diffAnalysis.AnalyzerVersion)
+		headRun, _, hErr := h.store.CreateOrGetAnalysis(r.Context(), headSnap, diffAnalysis.AnalyzerVersion)
+
+		if bErr == nil && hErr == nil {
+			if baseRun.Status == domain.StatusFailed {
+				_ = h.store.FailArchitectureDiff(r.Context(), id, "", "BASE_ANALYSIS_FAILED", "BASEコミットの解析が失敗しました")
+				diffAnalysis.Status = domain.DiffStatusFailed
+				code := "BASE_ANALYSIS_FAILED"
+				msg := "BASEコミットの解析が失敗しました"
+				diffAnalysis.ErrorCode = &code
+				diffAnalysis.ErrorMessage = &msg
+			} else if headRun.Status == domain.StatusFailed {
+				_ = h.store.FailArchitectureDiff(r.Context(), id, "", "HEAD_ANALYSIS_FAILED", "HEADコミットの解析が失敗しました")
+				diffAnalysis.Status = domain.DiffStatusFailed
+				code := "HEAD_ANALYSIS_FAILED"
+				msg := "HEADコミットの解析が失敗しました"
+				diffAnalysis.ErrorCode = &code
+				diffAnalysis.ErrorMessage = &msg
+			} else if baseRun.Status == domain.StatusCompleted && headRun.Status == domain.StatusCompleted {
+				_, baseFiles, baseEdges, err1 := h.store.GetAnalysisGraph(r.Context(), baseRun.ID)
+				_, headFiles, headEdges, err2 := h.store.GetAnalysisGraph(r.Context(), headRun.ID)
+				if err1 == nil && err2 == nil {
+					baseLang := baseRun.Language
+					if baseLang == "" {
+						baseLang = "python"
+					}
+					headLang := headRun.Language
+					if headLang == "" {
+						headLang = "python"
+					}
+					if baseLang != headLang {
+						_ = h.store.FailArchitectureDiff(r.Context(), id, "", "LANGUAGE_MISMATCH", "BASEとHEADで言語が異なります")
+						diffAnalysis.Status = domain.DiffStatusFailed
+						code := "LANGUAGE_MISMATCH"
+						msg := "BASEとHEADで言語が異なります"
+						diffAnalysis.ErrorCode = &code
+						diffAnalysis.ErrorMessage = &msg
+					} else {
+						diffRes := diff.ComputeGraphDiff(
+							diffAnalysis.BaseSHA, diffAnalysis.HeadSHA,
+							baseLang, baseRun.GraphGranularity,
+							baseFiles, baseEdges,
+							headFiles, headEdges,
+						)
+						_ = h.store.CompleteArchitectureDiff(r.Context(), id, "", diffRes.Summary)
+						diffAnalysis.Status = domain.DiffStatusCompleted
+						diffAnalysis.Stage = "completed"
+						diffAnalysis.DiffSummary = &diffRes.Summary
+					}
+				}
+			}
+		}
+	}
+
+	var completedAtStr *string
+	if diffAnalysis.CompletedAt != nil {
+		s := diffAnalysis.CompletedAt.UTC().Format(time.RFC3339)
+		completedAtStr = &s
+	}
+
+	resp := ArchitectureDiffStatusResponse{
+		ID:     diffAnalysis.ID,
+		Status: diffAnalysis.Status,
+		Stage:  diffAnalysis.Stage,
+		Repository: RepositorySummary{
+			Owner:   diffAnalysis.Repository.Owner,
+			Name:    diffAnalysis.Repository.Name,
+			HTMLURL: diffAnalysis.Repository.HTMLURL,
+		},
+		BaseSHA: diffAnalysis.BaseSHA,
+		HeadSHA: diffAnalysis.HeadSHA,
+		Error: AnalysisErrorField{
+			Code:    diffAnalysis.ErrorCode,
+			Message: diffAnalysis.ErrorMessage,
+		},
+		Summary:     diffAnalysis.DiffSummary,
+		CreatedAt:   diffAnalysis.CreatedAt.UTC().Format(time.RFC3339),
+		CompletedAt: completedAtStr,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleGetArchitectureDiffGraph(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	diffAnalysis, err := h.store.GetArchitectureDiff(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	baseSnap := githubclient.RepositorySnapshot{
+		GitHubID:      diffAnalysis.Repository.GitHubRepositoryID,
+		Owner:         diffAnalysis.Repository.Owner,
+		Name:          diffAnalysis.Repository.Name,
+		DefaultBranch: diffAnalysis.Repository.DefaultBranch,
+		HTMLURL:       diffAnalysis.Repository.HTMLURL,
+		CommitSHA:     diffAnalysis.BaseSHA,
+	}
+	headSnap := baseSnap
+	headSnap.CommitSHA = diffAnalysis.HeadSHA
+
+	baseRun, _, err1 := h.store.CreateOrGetAnalysis(r.Context(), baseSnap, diffAnalysis.AnalyzerVersion)
+	headRun, _, err2 := h.store.CreateOrGetAnalysis(r.Context(), headSnap, diffAnalysis.AnalyzerVersion)
+	if err1 != nil {
+		writeError(w, err1)
+		return
+	}
+	if err2 != nil {
+		writeError(w, err2)
+		return
+	}
+
+	if baseRun.Status != domain.StatusCompleted || headRun.Status != domain.StatusCompleted {
+		writeError(w, domain.NewAppError(
+			domain.ErrCodeAnalysisNotReady,
+			http.StatusConflict,
+			"BASEまたはHEADコミットの解析がまだ完了していません",
+			nil,
+		))
+		return
+	}
+
+	_, baseFiles, baseEdges, err1 := h.store.GetAnalysisGraph(r.Context(), baseRun.ID)
+	_, headFiles, headEdges, err2 := h.store.GetAnalysisGraph(r.Context(), headRun.ID)
+	if err1 != nil {
+		writeError(w, err1)
+		return
+	}
+	if err2 != nil {
+		writeError(w, err2)
+		return
+	}
+
+	baseLang := baseRun.Language
+	if baseLang == "" {
+		baseLang = "python"
+	}
+	headLang := headRun.Language
+	if headLang == "" {
+		headLang = "python"
+	}
+	if baseLang != headLang {
+		writeError(w, domain.NewAppError(
+			domain.ErrCodeInvalidRepositoryURL,
+			http.StatusBadRequest,
+			fmt.Sprintf("BASE(%s)とHEAD(%s)の言語が異なります", baseLang, headLang),
+			nil,
+		))
+		return
+	}
+
+	granularity := baseRun.GraphGranularity
+	if granularity == "" {
+		if baseLang == "go" {
+			granularity = "package"
+		} else {
+			granularity = "file"
+		}
+	}
+
+	diffRes := diff.ComputeGraphDiff(
+		diffAnalysis.BaseSHA,
+		diffAnalysis.HeadSHA,
+		baseLang,
+		granularity,
+		baseFiles,
+		baseEdges,
+		headFiles,
+		headEdges,
+	)
+
+	if diffAnalysis.Status != domain.DiffStatusCompleted {
+		_ = h.store.CompleteArchitectureDiff(r.Context(), id, "", diffRes.Summary)
+	}
+
+	resp := ArchitectureDiffGraphResponse{
+		DiffID: diffAnalysis.ID,
+		Repository: RepositorySummary{
+			Owner:   diffAnalysis.Repository.Owner,
+			Name:    diffAnalysis.Repository.Name,
+			HTMLURL: diffAnalysis.Repository.HTMLURL,
+		},
+		BaseSHA:      diffAnalysis.BaseSHA,
+		HeadSHA:      diffAnalysis.HeadSHA,
+		Language:     baseLang,
+		Granularity:  granularity,
+		Status:       domain.DiffStatusCompleted,
+		Summary:      diffRes.Summary,
+		Nodes:        diffRes.Nodes,
+		Edges:        diffRes.Edges,
+		CycleChanges: diffRes.CycleChanges,
+		Warnings:     diffRes.Warnings,
 	}
 
 	writeJSON(w, http.StatusOK, resp)

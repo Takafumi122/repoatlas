@@ -1,0 +1,23 @@
+{
+  "name": "09_conditional",
+  "description": "Conditional imports (TYPE_CHECKING and version guards)",
+  "internal_edges": [
+    {
+      "source": "cond.py",
+      "target": "mod_type.py"
+    },
+    {
+      "source": "cond.py",
+      "target": "mod_new.py"
+    },
+    {
+      "source": "cond.py",
+      "target": "mod_old.py"
+    }
+  ],
+  "external_imports": [
+    "sys",
+    "typing"
+  ],
+  "unresolved_imports": []
+}

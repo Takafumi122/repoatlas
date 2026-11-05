@@ -33,19 +33,30 @@ func NewWorker(st store.Store, proc *Processor, concurrency int, pollInterval ti
 	}
 }
 
-// StepOnce claims and processes at most one job synchronously.
+// StepOnce claims and processes at most one job synchronously (regular or PR).
 func (w *Worker) StepOnce(ctx context.Context) (bool, error) {
 	run, claimed, err := ClaimNext(ctx, w.store, "", w.processor.leaseDuration)
 	if err != nil {
 		return false, err
 	}
-	if !claimed || run == nil {
-		return false, nil
+	if claimed && run != nil {
+		if err := w.processor.ProcessRun(ctx, *run); err != nil {
+			return true, err
+		}
+		return true, nil
 	}
-	if err := w.processor.ProcessRun(ctx, *run); err != nil {
-		return true, err
+
+	pr, prClaimed, err := ClaimNextPR(ctx, w.store, "", w.processor.leaseDuration)
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	if prClaimed && pr != nil {
+		if err := w.processor.ProcessPRRun(ctx, *pr); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -72,7 +83,7 @@ func (w *Worker) loop(ctx context.Context, workerIdx int) {
 		default:
 		}
 
-		// Claim using parent ctx so we never claim new jobs after shutdown signal
+		// 1. Try claiming regular analysis run
 		run, claimed, err := ClaimNext(ctx, w.store, "", w.processor.leaseDuration)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -80,7 +91,6 @@ func (w *Worker) loop(ctx context.Context, workerIdx int) {
 			}
 			slog.Warn("worker claim error", "worker_id", workerIdx, "error", err.Error())
 		} else if claimed && run != nil {
-			// Process claimed job with a drain context so graceful shutdown lets in-flight work finish cleanly
 			execCtx, cancel := context.WithCancel(context.Background())
 			stopWatch := make(chan struct{})
 			go func() {
@@ -105,6 +115,42 @@ func (w *Worker) loop(ctx context.Context, workerIdx int) {
 				slog.Warn("worker process run failed", "worker_id", workerIdx, "analysis_id", run.ID, "error", procErr.Error())
 			} else {
 				slog.Info("worker completed analysis", "worker_id", workerIdx, "analysis_id", run.ID)
+			}
+			continue
+		}
+
+		// 2. Try claiming PR analysis run
+		prRun, prClaimed, err := ClaimNextPR(ctx, w.store, "", w.processor.leaseDuration)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Warn("worker claim PR error", "worker_id", workerIdx, "error", err.Error())
+		} else if prClaimed && prRun != nil {
+			execCtx, cancel := context.WithCancel(context.Background())
+			stopWatch := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					timer := time.NewTimer(w.shutdownGracePeriod)
+					defer timer.Stop()
+					select {
+					case <-timer.C:
+						cancel()
+					case <-stopWatch:
+					}
+				case <-stopWatch:
+				}
+			}()
+
+			procErr := w.processor.ProcessPRRun(execCtx, *prRun)
+			close(stopWatch)
+			cancel()
+
+			if procErr != nil {
+				slog.Warn("worker process PR run failed", "worker_id", workerIdx, "pr_analysis_id", prRun.ID, "error", procErr.Error())
+			} else {
+				slog.Info("worker completed PR analysis", "worker_id", workerIdx, "pr_analysis_id", prRun.ID)
 			}
 			continue
 		}

@@ -1,0 +1,16 @@
+{
+  "name": "13_circular",
+  "description": "Circular / mutual imports",
+  "internal_edges": [
+    {
+      "source": "circ_a.py",
+      "target": "circ_b.py"
+    },
+    {
+      "source": "circ_b.py",
+      "target": "circ_a.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

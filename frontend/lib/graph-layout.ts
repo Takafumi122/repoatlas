@@ -26,6 +26,8 @@ export interface FileNodeViewModel extends Record<string, unknown> {
   isDimmed: boolean;
   tourStep?: number;
   impactDepth?: number;
+  isPRChanged?: boolean;
+  prVisualRole?: string;
 }
 
 export interface DirectoryNodeViewModel extends Record<string, unknown> {

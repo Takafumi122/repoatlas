@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
@@ -15,6 +16,11 @@ type RawImport struct {
 	ImportedName string // e.g. "x" for "from pkg import x", "" for "import pkg"
 	Level        int    // 0 for absolute, >=1 for relative ("." = 1, ".." = 2)
 	LineNumber   int    // 1-based line number
+	StartLine    int    // 1-based start line
+	StartColumn  int    // 1-based start column (Unicode rune count in line)
+	EndLine      int    // 1-based end line
+	EndColumn    int    // 1-based end column (Unicode rune count in line)
+	ImportKind   string // "absolute" or "relative"
 }
 
 type ParsedFile struct {
@@ -84,9 +90,39 @@ func walkAST(node *tree_sitter.Node, source []byte, out *ParsedFile) {
 	}
 }
 
+func computeRunePosition(source []byte, point tree_sitter.Point) (int, int) {
+	line := int(point.Row) + 1
+	currRow := uint(0)
+	lineStart := 0
+	for i := 0; i < len(source); i++ {
+		if currRow == point.Row {
+			lineStart = i
+			break
+		}
+		if source[i] == '\n' {
+			currRow++
+			if currRow == point.Row {
+				lineStart = i + 1
+				break
+			}
+		}
+	}
+	byteCol := int(point.Column)
+	endOffset := lineStart + byteCol
+	if endOffset > len(source) {
+		endOffset = len(source)
+	}
+	if lineStart > endOffset {
+		return line, byteCol + 1
+	}
+	col := utf8.RuneCount(source[lineStart:endOffset]) + 1
+	return line, col
+}
+
 func extractImportStatement(node *tree_sitter.Node, source []byte) []RawImport {
 	stmtText := sanitizeImportText(node.Utf8Text(source))
-	line := int(node.StartPosition().Row) + 1
+	sLine, sCol := computeRunePosition(source, node.StartPosition())
+	eLine, eCol := computeRunePosition(source, node.EndPosition())
 
 	var imports []RawImport
 	count := node.NamedChildCount()
@@ -100,10 +136,15 @@ func extractImportStatement(node *tree_sitter.Node, source []byte) []RawImport {
 			mod := strings.TrimSpace(child.Utf8Text(source))
 			if mod != "" {
 				imports = append(imports, RawImport{
-					ImportText: stmtText,
-					Module:     mod,
-					Level:      0,
-					LineNumber: line,
+					ImportText:  stmtText,
+					Module:      mod,
+					Level:       0,
+					LineNumber:  sLine,
+					StartLine:   sLine,
+					StartColumn: sCol,
+					EndLine:     eLine,
+					EndColumn:   eCol,
+					ImportKind:  "absolute",
 				})
 			}
 		case "aliased_import":
@@ -115,10 +156,15 @@ func extractImportStatement(node *tree_sitter.Node, source []byte) []RawImport {
 				mod := strings.TrimSpace(nameNode.Utf8Text(source))
 				if mod != "" {
 					imports = append(imports, RawImport{
-						ImportText: stmtText,
-						Module:     mod,
-						Level:      0,
-						LineNumber: line,
+						ImportText:  stmtText,
+						Module:      mod,
+						Level:       0,
+						LineNumber:  sLine,
+						StartLine:   sLine,
+						StartColumn: sCol,
+						EndLine:     eLine,
+						EndColumn:   eCol,
+						ImportKind:  "absolute",
 					})
 				}
 			}
@@ -129,7 +175,8 @@ func extractImportStatement(node *tree_sitter.Node, source []byte) []RawImport {
 
 func extractImportFromStatement(node *tree_sitter.Node, source []byte) []RawImport {
 	stmtText := sanitizeImportText(node.Utf8Text(source))
-	line := int(node.StartPosition().Row) + 1
+	sLine, sCol := computeRunePosition(source, node.StartPosition())
+	eLine, eCol := computeRunePosition(source, node.EndPosition())
 
 	var module string
 	var level int
@@ -181,13 +228,23 @@ func extractImportFromStatement(node *tree_sitter.Node, source []byte) []RawImpo
 		}
 	}
 
+	importKind := "absolute"
+	if level > 0 {
+		importKind = "relative"
+	}
+
 	if len(importedNames) == 0 {
 		return []RawImport{
 			{
-				ImportText: stmtText,
-				Module:     module,
-				Level:      level,
-				LineNumber: line,
+				ImportText:  stmtText,
+				Module:      module,
+				Level:       level,
+				LineNumber:  sLine,
+				StartLine:   sLine,
+				StartColumn: sCol,
+				EndLine:     eLine,
+				EndColumn:   eCol,
+				ImportKind:  importKind,
 			},
 		}
 	}
@@ -199,7 +256,12 @@ func extractImportFromStatement(node *tree_sitter.Node, source []byte) []RawImpo
 			Module:       module,
 			ImportedName: imported,
 			Level:        level,
-			LineNumber:   line,
+			LineNumber:   sLine,
+			StartLine:    sLine,
+			StartColumn:  sCol,
+			EndLine:      eLine,
+			EndColumn:    eCol,
+			ImportKind:   importKind,
 		})
 	}
 	return imports

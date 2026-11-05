@@ -1,8 +1,15 @@
 import {
   APIErrorPayload,
   AnalysisStatusResponse,
+  ArchitectureDiffGraphResponse,
+  ArchitectureDiffStatusResponse,
   CreateAnalysisResponse,
+  CreateArchitectureDiffResponse,
+  CreatePRAnalysisResponse,
+  EvidenceResponse,
   GraphResponse,
+  PRAnalysisStatusResponse,
+  PRImpactResponse,
 } from "./types";
 
 export function resolveApiBaseUrl(
@@ -266,3 +273,163 @@ export async function getDemoGraph(signal?: AbortSignal): Promise<GraphResponse>
     return FALLBACK_DEMO_GRAPH;
   }
 }
+
+
+
+export async function createArchitectureDiff(
+  repositoryUrl: string,
+  baseSha: string,
+  headSha: string,
+  signal?: AbortSignal
+): Promise<CreateArchitectureDiffResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/architecture-diffs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      repository_url: repositoryUrl,
+      base_sha: baseSha,
+      head_sha: headSha,
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as CreateArchitectureDiffResponse;
+}
+
+export async function getArchitectureDiffStatus(
+  id: string,
+  signal?: AbortSignal
+): Promise<ArchitectureDiffStatusResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/architecture-diffs/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as ArchitectureDiffStatusResponse;
+}
+
+export async function getArchitectureDiffGraph(
+  id: string,
+  signal?: AbortSignal
+): Promise<ArchitectureDiffGraphResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/architecture-diffs/${encodeURIComponent(id)}/graph`,
+    {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as ArchitectureDiffGraphResponse;
+}
+
+export async function createPRAnalysis(
+  url: string,
+  signal?: AbortSignal
+): Promise<CreatePRAnalysisResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/pull-requests/analyses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ url }),
+    signal,
+  });
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as CreatePRAnalysisResponse;
+}
+
+export async function getPRAnalysisStatus(
+  id: string,
+  signal?: AbortSignal
+): Promise<PRAnalysisStatusResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/pull-requests/analyses/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as PRAnalysisStatusResponse;
+}
+
+export async function getPRAnalysisImpact(
+  id: string,
+  signal?: AbortSignal
+): Promise<PRImpactResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/pull-requests/analyses/${encodeURIComponent(id)}/impact`,
+    {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as PRImpactResponse;
+}
+
+export async function getAnalysisEvidence(
+  analysisId: string,
+  options?: {
+    sourcePath?: string;
+    targetPath?: string;
+    unresolvedOnly?: boolean;
+  },
+  signal?: AbortSignal
+): Promise<EvidenceResponse> {
+  const params = new URLSearchParams();
+  if (options?.sourcePath) params.set("source_path", options.sourcePath);
+  if (options?.targetPath) params.set("target_path", options.targetPath);
+  if (options?.unresolvedOnly) params.set("unresolved_only", "true");
+
+  const qs = params.toString();
+  const url = `${API_BASE_URL}/api/v1/analyses/${encodeURIComponent(analysisId)}/evidence${qs ? `?${qs}` : ""}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal,
+  });
+
+  if (!res.ok) {
+    throw await parseErrorResponse(res);
+  }
+  return (await res.json()) as EvidenceResponse;
+}
+
+

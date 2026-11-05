@@ -1,0 +1,12 @@
+{
+  "name": "04_relative_parent",
+  "description": "Parent directory relative imports",
+  "internal_edges": [
+    {
+      "source": "pkg/sub/c.py",
+      "target": "pkg/b.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}
