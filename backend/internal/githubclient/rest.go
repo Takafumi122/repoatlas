@@ -251,6 +251,310 @@ func (c *RESTClient) Resolve(ctx context.Context, owner, repo string) (Repositor
 	}, nil
 }
 
+func (c *RESTClient) ResolveCommit(ctx context.Context, owner, repo, commitSHA string) (RepositorySnapshot, error) {
+	parsed, err := ParseRepositoryURL("https://github.com/" + owner + "/" + repo)
+	if err != nil {
+		return RepositorySnapshot{}, err
+	}
+	sha := strings.ToLower(strings.TrimSpace(commitSHA))
+	if !shaRegex.MatchString(sha) {
+		return RepositorySnapshot{}, domain.NewAppError(domain.ErrCodeInternalError, http.StatusBadRequest, "不正なコミットSHAです", nil)
+	}
+
+	repoEndpoint := fmt.Sprintf("%s/repos/%s/%s", c.baseURL, url.PathEscape(parsed.Owner), url.PathEscape(parsed.Repo))
+	resp, err := c.doWithRetry(ctx, repoEndpoint, "application/vnd.github+json")
+	if err != nil {
+		return RepositorySnapshot{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return RepositorySnapshot{}, mapGitHubHTTPError(resp)
+	}
+
+	var repoMeta githubRepoResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&repoMeta); err != nil {
+		return RepositorySnapshot{}, domain.NewAppError(
+			domain.ErrCodeInternalError,
+			http.StatusBadGateway,
+			"GitHubメタデータの解析に失敗しました",
+			err,
+		)
+	}
+
+	if repoMeta.Private || (repoMeta.Visibility != "" && repoMeta.Visibility != "public") {
+		return RepositorySnapshot{}, domain.NewAppError(
+			domain.ErrCodeRepositoryNotPublic,
+			http.StatusUnprocessableEntity,
+			"非公開リポジトリは解析できません。公開リポジトリを指定してください",
+			nil,
+		)
+	}
+
+	if repoMeta.Size > 102400 {
+		return RepositorySnapshot{}, domain.NewAppError(
+			domain.ErrCodeRepoTooLarge,
+			http.StatusRequestEntityTooLarge,
+			"リポジトリサイズが大きすぎます（上限100MiB）",
+			nil,
+		)
+	}
+
+	commitEndpoint := fmt.Sprintf("%s/repos/%s/%s/commits/%s",
+		c.baseURL,
+		url.PathEscape(parsed.Owner),
+		url.PathEscape(parsed.Repo),
+		url.PathEscape(sha),
+	)
+	commitResp, err := c.doWithRetry(ctx, commitEndpoint, "application/vnd.github+json")
+	if err != nil {
+		return RepositorySnapshot{}, err
+	}
+	defer commitResp.Body.Close()
+
+	if commitResp.StatusCode != http.StatusOK {
+		return RepositorySnapshot{}, mapGitHubHTTPError(commitResp)
+	}
+
+	ownerLogin := repoMeta.Owner.Login
+	if ownerLogin == "" {
+		ownerLogin = parsed.Owner
+	}
+	repoName := repoMeta.Name
+	if repoName == "" {
+		repoName = parsed.Repo
+	}
+	htmlURL := repoMeta.HTMLURL
+	if htmlURL == "" {
+		htmlURL = "https://github.com/" + ownerLogin + "/" + repoName
+	}
+
+	return RepositorySnapshot{
+		GitHubID:      repoMeta.ID,
+		Owner:         ownerLogin,
+		Name:          repoName,
+		DefaultBranch: repoMeta.DefaultBranch,
+		CommitSHA:     sha,
+		HTMLURL:       htmlURL,
+	}, nil
+}
+
+func (c *RESTClient) GetPullRequest(ctx context.Context, owner, repo string, pullNumber int) (domain.PullRequestSnapshot, error) {
+	parsed, err := ParseRepositoryURL("https://github.com/" + owner + "/" + repo)
+	if err != nil {
+		return domain.PullRequestSnapshot{}, err
+	}
+	if pullNumber <= 0 {
+		return domain.PullRequestSnapshot{}, domain.NewAppError(domain.ErrCodeInvalidPullRequestURL, http.StatusBadRequest, "不正なPull Request番号です", nil)
+	}
+
+	prEndpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d",
+		c.baseURL,
+		url.PathEscape(parsed.Owner),
+		url.PathEscape(parsed.Repo),
+		pullNumber,
+	)
+	resp, err := c.doWithRetry(ctx, prEndpoint, "application/vnd.github+json")
+	if err != nil {
+		return domain.PullRequestSnapshot{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return domain.PullRequestSnapshot{}, domain.NewAppError(
+				domain.ErrCodePullRequestNotFound,
+				http.StatusNotFound,
+				"指定されたPull Requestが見つかりません",
+				nil,
+			)
+		}
+		return domain.PullRequestSnapshot{}, mapGitHubHTTPError(resp)
+	}
+
+	var prMeta struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		State  string `json:"state"`
+		Base   struct {
+			SHA  string             `json:"sha"`
+			Ref  string             `json:"ref"`
+			Repo githubRepoResponse `json:"repo"`
+		} `json:"base"`
+		Head struct {
+			SHA  string             `json:"sha"`
+			Ref  string             `json:"ref"`
+			Repo githubRepoResponse `json:"repo"`
+		} `json:"head"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&prMeta); err != nil {
+		return domain.PullRequestSnapshot{}, domain.NewAppError(
+			domain.ErrCodeInternalError,
+			http.StatusBadGateway,
+			"GitHub PRメタデータの解析に失敗しました",
+			err,
+		)
+	}
+
+	if prMeta.Base.Repo.Private || (prMeta.Base.Repo.Visibility != "" && prMeta.Base.Repo.Visibility != "public") {
+		return domain.PullRequestSnapshot{}, domain.NewAppError(
+			domain.ErrCodeRepositoryNotPublic,
+			http.StatusUnprocessableEntity,
+			"非公開リポジトリのPull Requestは解析できません",
+			nil,
+		)
+	}
+
+	baseSHA := strings.ToLower(strings.TrimSpace(prMeta.Base.SHA))
+	headSHA := strings.ToLower(strings.TrimSpace(prMeta.Head.SHA))
+	if !shaRegex.MatchString(baseSHA) || !shaRegex.MatchString(headSHA) {
+		return domain.PullRequestSnapshot{}, domain.NewAppError(
+			domain.ErrCodeInternalError,
+			http.StatusBadGateway,
+			"Pull Requestから有効なBASE/HEADコミットSHAを取得できませんでした",
+			nil,
+		)
+	}
+
+	ownerLogin := prMeta.Base.Repo.Owner.Login
+	if ownerLogin == "" {
+		ownerLogin = parsed.Owner
+	}
+	repoName := prMeta.Base.Repo.Name
+	if repoName == "" {
+		repoName = parsed.Repo
+	}
+	htmlURL := prMeta.Base.Repo.HTMLURL
+	if htmlURL == "" {
+		htmlURL = "https://github.com/" + ownerLogin + "/" + repoName
+	}
+
+	return domain.PullRequestSnapshot{
+		Repository: domain.Repository{
+			GitHubRepositoryID: prMeta.Base.Repo.ID,
+			Owner:              ownerLogin,
+			Name:               repoName,
+			DefaultBranch:      prMeta.Base.Repo.DefaultBranch,
+			HTMLURL:            htmlURL,
+		},
+		PullNumber: prMeta.Number,
+		Title:      prMeta.Title,
+		State:      prMeta.State,
+		BaseSHA:    baseSHA,
+		HeadSHA:    headSHA,
+		BaseRef:    prMeta.Base.Ref,
+		HeadRef:    prMeta.Head.Ref,
+	}, nil
+}
+
+func (c *RESTClient) GetPullRequestFiles(ctx context.Context, owner, repo string, pullNumber int, maxFiles int) ([]domain.PullRequestFile, error) {
+	parsed, err := ParseRepositoryURL("https://github.com/" + owner + "/" + repo)
+	if err != nil {
+		return nil, err
+	}
+	if maxFiles <= 0 {
+		maxFiles = 300
+	}
+
+	var allFiles []domain.PullRequestFile
+	page := 1
+	perPage := 100
+
+	for {
+		filesEndpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/files?per_page=%d&page=%d",
+			c.baseURL,
+			url.PathEscape(parsed.Owner),
+			url.PathEscape(parsed.Repo),
+			pullNumber,
+			perPage,
+			page,
+		)
+
+		resp, err := c.doWithRetry(ctx, filesEndpoint, "application/vnd.github+json")
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, mapGitHubHTTPError(resp)
+		}
+
+		var pageFiles []struct {
+			Filename         string `json:"filename"`
+			PreviousFilename string `json:"previous_filename"`
+			Status           string `json:"status"`
+			Additions        int    `json:"additions"`
+			Deletions        int    `json:"deletions"`
+			Changes          int    `json:"changes"`
+		}
+
+		decErr := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&pageFiles)
+		resp.Body.Close()
+		if decErr != nil {
+			return nil, domain.NewAppError(domain.ErrCodeInternalError, http.StatusBadGateway, "PRファイル一覧の解析に失敗しました", decErr)
+		}
+
+		if len(pageFiles) == 0 {
+			break
+		}
+
+		for _, pf := range pageFiles {
+			isPy := strings.HasSuffix(strings.ToLower(pf.Filename), ".py")
+			var status domain.PullRequestFileStatus
+			switch pf.Status {
+			case "added":
+				status = domain.PRFileAdded
+			case "removed":
+				status = domain.PRFileRemoved
+			case "renamed":
+				status = domain.PRFileRenamed
+			default:
+				status = domain.PRFileModified
+			}
+
+			isAnalyzed := false
+			unanalyzedReason := ""
+			if !isPy {
+				unanalyzedReason = "non_python_file"
+			} else if status == domain.PRFileRemoved {
+				unanalyzedReason = "file_removed_in_pr"
+			} else {
+				isAnalyzed = true
+			}
+
+			allFiles = append(allFiles, domain.PullRequestFile{
+				Path:             pf.Filename,
+				PreviousPath:     pf.PreviousFilename,
+				Status:           status,
+				Additions:        pf.Additions,
+				Deletions:        pf.Deletions,
+				Changes:          pf.Changes,
+				IsPython:         isPy,
+				IsAnalyzed:       isAnalyzed,
+				UnanalyzedReason: unanalyzedReason,
+			})
+
+			if len(allFiles) > maxFiles {
+				return nil, domain.NewAppError(
+					domain.ErrCodePRTooManyFiles,
+					http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("変更ファイル数が上限（%d件）を超過しました（%d件以上）。完全な解析を保証できないため中断しました", maxFiles, len(allFiles)),
+					nil,
+				)
+			}
+		}
+
+		if len(pageFiles) < perPage {
+			break
+		}
+		page++
+	}
+
+	return allFiles, nil
+}
+
 func (c *RESTClient) DownloadArchive(ctx context.Context, snapshot RepositorySnapshot) (io.ReadCloser, error) {
 	parsed, err := ParseRepositoryURL("https://github.com/" + snapshot.Owner + "/" + snapshot.Name)
 	if err != nil {

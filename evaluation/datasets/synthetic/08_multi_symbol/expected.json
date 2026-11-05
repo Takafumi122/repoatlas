@@ -1,0 +1,12 @@
+{
+  "name": "08_multi_symbol",
+  "description": "Multi-symbol imports from single module",
+  "internal_edges": [
+    {
+      "source": "caller.py",
+      "target": "callee.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

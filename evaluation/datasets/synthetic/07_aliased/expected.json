@@ -1,0 +1,16 @@
+{
+  "name": "07_aliased",
+  "description": "Aliased imports",
+  "internal_edges": [
+    {
+      "source": "mod_a.py",
+      "target": "mod_b.py"
+    },
+    {
+      "source": "mod_a.py",
+      "target": "mod_c.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

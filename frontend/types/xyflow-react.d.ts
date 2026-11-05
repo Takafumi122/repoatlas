@@ -65,6 +65,11 @@ declare module "@xyflow/react" {
     node: TNode
   ) => void;
 
+  export type EdgeMouseHandler<TEdge extends Edge = Edge> = (
+    event: React.MouseEvent,
+    edge: TEdge
+  ) => void;
+
   export interface HandleProps {
     type: "source" | "target";
     position: Position;
@@ -110,6 +115,7 @@ declare module "@xyflow/react" {
     edges?: TEdge[];
     nodeTypes?: Record<string, React.ComponentType<any>>;
     onNodeClick?: NodeMouseHandler<TNode>;
+    onEdgeClick?: EdgeMouseHandler<TEdge>;
     onPaneClick?: (event: React.MouseEvent) => void;
     fitView?: boolean;
     minZoom?: number;

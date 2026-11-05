@@ -53,6 +53,71 @@ func (c *FixtureFallbackClient) Resolve(ctx context.Context, owner, repo string)
 	return c.primary.Resolve(ctx, owner, repo)
 }
 
+func (c *FixtureFallbackClient) ResolveCommit(ctx context.Context, owner, repo, commitSHA string) (RepositorySnapshot, error) {
+	if strings.EqualFold(owner, "fixture") && c.fixtureDir != "" {
+		snap, err := c.Resolve(ctx, owner, repo)
+		if err != nil {
+			return RepositorySnapshot{}, err
+		}
+		snap.CommitSHA = commitSHA
+		return snap, nil
+	}
+	return c.primary.ResolveCommit(ctx, owner, repo, commitSHA)
+}
+
+func (c *FixtureFallbackClient) GetPullRequest(ctx context.Context, owner, repo string, pullNumber int) (domain.PullRequestSnapshot, error) {
+	if strings.EqualFold(owner, "fixture") && c.fixtureDir != "" {
+		snap, err := c.Resolve(ctx, owner, repo)
+		if err != nil {
+			return domain.PullRequestSnapshot{}, err
+		}
+		return domain.PullRequestSnapshot{
+			Repository: domain.Repository{
+				GitHubRepositoryID: snap.GitHubID,
+				Owner:              snap.Owner,
+				Name:               snap.Name,
+				DefaultBranch:      snap.DefaultBranch,
+				HTMLURL:            snap.HTMLURL,
+			},
+			PullNumber: pullNumber,
+			Title:      "Fixture PR for " + repo,
+			State:      "open",
+			BaseSHA:    "0000000000111111111122222222223333333333",
+			HeadSHA:    "1111111111222222222233333333334444444444",
+			BaseRef:    "main",
+			HeadRef:    "feature-pr",
+		}, nil
+	}
+	return c.primary.GetPullRequest(ctx, owner, repo, pullNumber)
+}
+
+func (c *FixtureFallbackClient) GetPullRequestFiles(ctx context.Context, owner, repo string, pullNumber int, maxFiles int) ([]domain.PullRequestFile, error) {
+	if strings.EqualFold(owner, "fixture") && c.fixtureDir != "" {
+		return []domain.PullRequestFile{
+			{
+				Path:       "app/models.py",
+				Status:     domain.PRFileModified,
+				Additions:  5,
+				Deletions:  2,
+				Changes:    7,
+				IsPython:   true,
+				IsAnalyzed: true,
+			},
+			{
+				Path:             "README.md",
+				Status:           domain.PRFileModified,
+				Additions:        3,
+				Deletions:        0,
+				Changes:          3,
+				IsPython:         false,
+				IsAnalyzed:       false,
+				UnanalyzedReason: "non_python_file",
+			},
+		}, nil
+	}
+	return c.primary.GetPullRequestFiles(ctx, owner, repo, pullNumber, maxFiles)
+}
+
 func (c *FixtureFallbackClient) DownloadArchive(ctx context.Context, snapshot RepositorySnapshot) (io.ReadCloser, error) {
 	if strings.EqualFold(snapshot.Owner, "fixture") && c.fixtureDir != "" {
 		dirName := strings.ReplaceAll(snapshot.Name, "-", "_")

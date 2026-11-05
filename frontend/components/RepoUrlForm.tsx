@@ -7,19 +7,29 @@ import { APIClientError, createAnalysis } from "@/lib/api";
 
 const SAMPLE_REPOS = [
   {
-    label: "pallets/itsdangerous",
-    desc: "軽量・15ファイル（数秒で完了）",
+    label: "pallets/itsdangerous (Python)",
+    desc: "軽量Python・15ファイル",
     url: "https://github.com/pallets/itsdangerous",
   },
   {
-    label: "psf/requests",
-    desc: "定番HTTPライブラリ・37ファイル",
+    label: "psf/requests (Python)",
+    desc: "定番HTTPライブラリ",
     url: "https://github.com/psf/requests",
   },
   {
-    label: "pallets/click",
-    desc: "CLIツールキット",
-    url: "https://github.com/pallets/click",
+    label: "spf13/cobra (Go)",
+    desc: "定番Go CLIフレームワーク",
+    url: "https://github.com/spf13/cobra",
+  },
+  {
+    label: "go-chi/chi (Go)",
+    desc: "軽量Go HTTPルーター",
+    url: "https://github.com/go-chi/chi",
+  },
+  {
+    label: "jmoiron/sqlx (Go)",
+    desc: "Go DB拡張ライブラリ",
+    url: "https://github.com/jmoiron/sqlx",
   },
 ];
 
@@ -60,7 +70,7 @@ export function RepoUrlForm() {
       <form onSubmit={handleSubmit} className="repo-form" noValidate>
         <div className="form-header-row">
           <label htmlFor="repository-url-input" className="field-label">
-            GitHub Public Repository URL (Python)
+            GitHub Public Repository URL (Python & Go)
           </label>
           <span className="badge badge-live-mode">LIVE GITHUB ANALYSIS</span>
         </div>
@@ -71,7 +81,7 @@ export function RepoUrlForm() {
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://github.com/owner/repo (例: https://github.com/psf/requests)"
+            placeholder="https://github.com/owner/repo (例: https://github.com/spf13/cobra または psf/requests)"
             className="url-input"
             disabled={submitting}
             autoFocus
@@ -113,6 +123,21 @@ export function RepoUrlForm() {
       </form>
 
       <div className="demo-cta-bar">
+        <div>
+          <div className="demo-cta-heading">
+            <span className="badge badge-demo">ARCHITECTURE DIFF</span>
+            <strong>2つのコミット間のアーキテクチャ変化を比較:</strong>
+          </div>
+          <p className="muted-text">
+            BASEとHEADのコミットSHAを指定し、依存グラフの追加・削除・変更や循環依存（SCC）の発生・解消を可視化します。
+          </p>
+        </div>
+        <Link href="/diff" className="btn btn-primary" style={{ whiteSpace: "nowrap" }}>
+          Architecture Diff を開く
+        </Link>
+      </div>
+
+      <div className="demo-cta-bar" style={{ marginTop: "1rem" }}>
         <div>
           <div className="demo-cta-heading">
             <span className="badge badge-demo">INSTANT DEMO</span>

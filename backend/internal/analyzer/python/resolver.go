@@ -1,6 +1,7 @@
 package python
 
 import (
+	"fmt"
 	"path"
 	"strings"
 
@@ -10,11 +11,25 @@ import (
 // ResolveImport resolves a single extracted Python import from sourcePath against the ModuleIndex.
 // It strictly assigns internal only when a single target file in the repository is unambiguously matched.
 func ResolveImport(sourcePath string, imp RawImport, idx *ModuleIndex) domain.ImportReference {
+	importKind := imp.ImportKind
+	if importKind == "" {
+		if imp.Level > 0 {
+			importKind = "relative"
+		} else {
+			importKind = "absolute"
+		}
+	}
+
 	ref := domain.ImportReference{
-		SourcePath: sourcePath,
-		ImportText: imp.ImportText,
-		ModuleName: formatModuleName(imp),
-		LineNumber: imp.LineNumber,
+		SourcePath:  sourcePath,
+		ImportText:  imp.ImportText,
+		ModuleName:  formatModuleName(imp),
+		LineNumber:  imp.LineNumber,
+		StartLine:   imp.StartLine,
+		StartColumn: imp.StartColumn,
+		EndLine:     imp.EndLine,
+		EndColumn:   imp.EndColumn,
+		ImportKind:  importKind,
 	}
 
 	if imp.Level > 0 {
@@ -22,9 +37,12 @@ func ResolveImport(sourcePath string, imp RawImport, idx *ModuleIndex) domain.Im
 		if ok {
 			ref.Classification = domain.ImportInternal
 			ref.TargetPath = target
+			ref.ResolutionReason = fmt.Sprintf("相対参照 (%s) から内部ファイル %s に一意に解決", strings.Repeat(".", imp.Level), target)
+			ref.ResolutionNote = strPtr(ref.ResolutionReason)
 			return ref
 		}
 		ref.Classification = domain.ImportUnresolved
+		ref.ResolutionReason = note
 		ref.ResolutionNote = strPtr(note)
 		return ref
 	}
@@ -32,7 +50,8 @@ func ResolveImport(sourcePath string, imp RawImport, idx *ModuleIndex) domain.Im
 	// Absolute import (Level == 0)
 	if imp.Module == "" {
 		ref.Classification = domain.ImportUnresolved
-		ref.ResolutionNote = strPtr("empty module name")
+		ref.ResolutionReason = "モジュール名が空のため解決できません"
+		ref.ResolutionNote = strPtr(ref.ResolutionReason)
 		return ref
 	}
 
@@ -42,11 +61,14 @@ func ResolveImport(sourcePath string, imp RawImport, idx *ModuleIndex) domain.Im
 		if target, ambiguous, found := idx.LookupModule(subCandidate); found {
 			if ambiguous {
 				ref.Classification = domain.ImportUnresolved
-				ref.ResolutionNote = strPtr("ambiguous internal module: " + subCandidate)
+				ref.ResolutionReason = fmt.Sprintf("複数の内部モジュール候補が存在し一意に解決できません: %s", subCandidate)
+				ref.ResolutionNote = strPtr(ref.ResolutionReason)
 				return ref
 			}
 			ref.Classification = domain.ImportInternal
 			ref.TargetPath = target
+			ref.ResolutionReason = fmt.Sprintf("モジュール索引からサブモジュール %s (%s) に一意に解決", subCandidate, target)
+			ref.ResolutionNote = strPtr(ref.ResolutionReason)
 			return ref
 		}
 	}
@@ -55,11 +77,14 @@ func ResolveImport(sourcePath string, imp RawImport, idx *ModuleIndex) domain.Im
 	if target, ambiguous, found := idx.LookupModule(imp.Module); found {
 		if ambiguous {
 			ref.Classification = domain.ImportUnresolved
-			ref.ResolutionNote = strPtr("ambiguous internal module: " + imp.Module)
+			ref.ResolutionReason = fmt.Sprintf("複数の内部モジュール候補が存在し一意に解決できません: %s", imp.Module)
+			ref.ResolutionNote = strPtr(ref.ResolutionReason)
 			return ref
 		}
 		ref.Classification = domain.ImportInternal
 		ref.TargetPath = target
+		ref.ResolutionReason = fmt.Sprintf("モジュール索引から内部モジュール %s (%s) に一意に解決", imp.Module, target)
+		ref.ResolutionNote = strPtr(ref.ResolutionReason)
 		return ref
 	}
 
@@ -67,11 +92,14 @@ func ResolveImport(sourcePath string, imp RawImport, idx *ModuleIndex) domain.Im
 	top := topSegment(imp.Module)
 	if idx.IsInternalTopPackage(top) {
 		ref.Classification = domain.ImportUnresolved
-		ref.ResolutionNote = strPtr("unresolved internal module: " + imp.Module)
+		ref.ResolutionReason = fmt.Sprintf("内部トップレベルパッケージ配下ですが該当モジュールが見つかりません: %s", imp.Module)
+		ref.ResolutionNote = strPtr(ref.ResolutionReason)
 		return ref
 	}
 
 	ref.Classification = domain.ImportExternal
+	ref.ResolutionReason = fmt.Sprintf("リポジトリ内に対応する内部モジュールが見つからないため外部ライブラリと判定: %s", top)
+	ref.ResolutionNote = strPtr(ref.ResolutionReason)
 	return ref
 }
 
@@ -97,7 +125,7 @@ func resolveRelativeImport(sourcePath string, imp RawImport, idx *ModuleIndex) (
 	// Level 1 (".") stays in dirParts; Level 2 ("..") goes up 1 directory, etc.
 	upCount := imp.Level - 1
 	if upCount > len(dirParts) {
-		return "", "relative import goes beyond top-level package", false
+		return "", "相対importがトップレベルパッケージの境界を超えています", false
 	}
 	baseParts := dirParts[:len(dirParts)-upCount]
 
@@ -123,7 +151,7 @@ func resolveRelativeImport(sourcePath string, imp RawImport, idx *ModuleIndex) (
 		}
 		if target, ambiguous, found := lookupPathAsModuleOrPackage(subDir, idx); found {
 			if ambiguous {
-				return "", "ambiguous relative submodule match", false
+				return "", "複数の内部サブモジュール候補が存在し一意に解決できません", false
 			}
 			return target, "", true
 		}
@@ -135,11 +163,11 @@ func resolveRelativeImport(sourcePath string, imp RawImport, idx *ModuleIndex) (
 		modTargetDir := joinRel(baseDir, modRelPath)
 		if target, ambiguous, found := lookupPathAsModuleOrPackage(modTargetDir, idx); found {
 			if ambiguous {
-				return "", "ambiguous relative module match", false
+				return "", "複数の内部モジュール候補が存在し一意に解決できません", false
 			}
 			return target, "", true
 		}
-		return "", "relative module target not found", false
+		return "", fmt.Sprintf("相対モジュールが見つかりません: %s", modRelPath), false
 	}
 
 	// Subcase C: "from . import *"
@@ -150,7 +178,7 @@ func resolveRelativeImport(sourcePath string, imp RawImport, idx *ModuleIndex) (
 		}
 	}
 
-	return "", "relative import target not found", false
+	return "", "相対importの解決先ファイルが見つかりません", false
 }
 
 func lookupPathAsModuleOrPackage(basePath string, idx *ModuleIndex) (string, bool, bool) {

@@ -1,0 +1,12 @@
+{
+  "name": "05_relative_deep",
+  "description": "Deep nested relative imports",
+  "internal_edges": [
+    {
+      "source": "pkg/deep/nested/d.py",
+      "target": "pkg/b.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

@@ -1,0 +1,15 @@
+{
+  "name": "14_unresolved",
+  "description": "Unresolved broken imports: relative escape and non-existent internal submodules",
+  "internal_edges": [
+    {
+      "source": "mypkg/broken.py",
+      "target": "mypkg/valid.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": [
+    "mypkg/broken.py:2 (..outside)",
+    "mypkg/broken.py:5 (mypkg.ghost_module)"
+  ]
+}

@@ -1,5 +1,5 @@
 -- RepoAtlas initial PostgreSQL schema. PostgreSQL 15+.
-CREATE TABLE repositories (
+CREATE TABLE IF NOT EXISTS repositories (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     github_repository_id BIGINT NOT NULL UNIQUE,
     owner TEXT NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE repositories (
     CONSTRAINT repositories_name_not_empty CHECK (length(name) > 0)
 );
 
-CREATE TABLE analysis_runs (
+CREATE TABLE IF NOT EXISTS analysis_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     commit_sha CHAR(40) NOT NULL,
@@ -35,10 +35,10 @@ CREATE TABLE analysis_runs (
     CONSTRAINT analysis_runs_unique_snapshot UNIQUE (repository_id, commit_sha, analyzer_version)
 );
 
-CREATE INDEX analysis_runs_queue_idx
+CREATE INDEX IF NOT EXISTS analysis_runs_queue_idx
     ON analysis_runs (status, lease_expires_at, created_at);
 
-CREATE TABLE source_files (
+CREATE TABLE IF NOT EXISTS source_files (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     analysis_id UUID NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE source_files (
     CONSTRAINT source_files_run_id_unique UNIQUE (analysis_id, id)
 );
 
-CREATE TABLE import_references (
+CREATE TABLE IF NOT EXISTS import_references (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     analysis_id UUID NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
     source_file_id BIGINT NOT NULL,
@@ -75,7 +75,7 @@ CREATE TABLE import_references (
             OR (classification <> 'internal' AND target_file_id IS NULL))
 );
 
-CREATE INDEX import_references_run_idx ON import_references (analysis_id);
-CREATE INDEX import_references_source_idx ON import_references (analysis_id, source_file_id);
-CREATE INDEX import_references_target_idx ON import_references (analysis_id, target_file_id)
+CREATE INDEX IF NOT EXISTS import_references_run_idx ON import_references (analysis_id);
+CREATE INDEX IF NOT EXISTS import_references_source_idx ON import_references (analysis_id, source_file_id);
+CREATE INDEX IF NOT EXISTS import_references_target_idx ON import_references (analysis_id, target_file_id)
     WHERE target_file_id IS NOT NULL;

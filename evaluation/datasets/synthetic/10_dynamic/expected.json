@@ -1,0 +1,9 @@
+{
+  "name": "10_dynamic",
+  "description": "Dynamic imports (__import__, importlib)",
+  "internal_edges": [],
+  "external_imports": [
+    "importlib"
+  ],
+  "unresolved_imports": []
+}

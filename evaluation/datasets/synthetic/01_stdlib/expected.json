@@ -1,0 +1,11 @@
+{
+  "name": "01_stdlib",
+  "description": "Standard library imports",
+  "internal_edges": [],
+  "external_imports": [
+    "sys",
+    "os.path",
+    "json"
+  ],
+  "unresolved_imports": []
+}

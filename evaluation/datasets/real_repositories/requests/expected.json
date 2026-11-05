@@ -1,0 +1,87 @@
+{
+  "repo": "psf/requests",
+  "commit_sha": "df2e8c26725bf4e3658eb625e6ff5469499a18fa",
+  "description": "psf/requests v2.32.3 core dependency graph",
+  "internal_edges": [
+    {
+      "source": "src/requests/__init__.py",
+      "target": "src/requests/packages.py"
+    },
+    {
+      "source": "src/requests/__init__.py",
+      "target": "src/requests/api.py"
+    },
+    {
+      "source": "src/requests/__init__.py",
+      "target": "src/requests/exceptions.py"
+    },
+    {
+      "source": "src/requests/__init__.py",
+      "target": "src/requests/models.py"
+    },
+    {
+      "source": "src/requests/__init__.py",
+      "target": "src/requests/sessions.py"
+    },
+    {
+      "source": "src/requests/__init__.py",
+      "target": "src/requests/status_codes.py"
+    },
+    {
+      "source": "src/requests/auth.py",
+      "target": "src/requests/compat.py"
+    },
+    {
+      "source": "src/requests/auth.py",
+      "target": "src/requests/models.py"
+    },
+    {
+      "source": "src/requests/cookies.py",
+      "target": "src/requests/compat.py"
+    },
+    {
+      "source": "src/requests/models.py",
+      "target": "src/requests/compat.py"
+    },
+    {
+      "source": "src/requests/models.py",
+      "target": "src/requests/exceptions.py"
+    },
+    {
+      "source": "src/requests/models.py",
+      "target": "src/requests/structures.py"
+    },
+    {
+      "source": "src/requests/models.py",
+      "target": "src/requests/hooks.py"
+    },
+    {
+      "source": "src/requests/adapters.py",
+      "target": "src/requests/models.py"
+    },
+    {
+      "source": "src/requests/adapters.py",
+      "target": "src/requests/exceptions.py"
+    },
+    {
+      "source": "src/requests/sessions.py",
+      "target": "src/requests/adapters.py"
+    },
+    {
+      "source": "src/requests/sessions.py",
+      "target": "src/requests/models.py"
+    },
+    {
+      "source": "src/requests/sessions.py",
+      "target": "src/requests/hooks.py"
+    },
+    {
+      "source": "src/requests/sessions.py",
+      "target": "src/requests/status_codes.py"
+    },
+    {
+      "source": "src/requests/api.py",
+      "target": "src/requests/sessions.py"
+    }
+  ]
+}

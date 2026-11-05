@@ -2,17 +2,25 @@ package graph
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/repoatlas/repoatlas/backend/internal/domain"
 )
 
 type Edge struct {
-	SourcePath string
-	TargetPath string
-	Kind       string
+	SourcePath       string `json:"source"`
+	TargetPath       string `json:"target"`
+	Kind             string `json:"kind"`
+	EvidenceCount    int    `json:"evidence_count,omitempty"`
+	SourcePackage    string `json:"source_package,omitempty"`
+	TargetPackage    string `json:"target_package,omitempty"`
+	BuildConstraints string `json:"build_constraints,omitempty"`
+	IsConditional    bool   `json:"is_conditional,omitempty"`
 }
 
 type BuildOutput struct {
+	Language               string
+	GraphGranularity       string
 	Files                  []domain.SourceFile
 	Edges                  []Edge
 	Imports                []domain.ImportReference
@@ -43,6 +51,7 @@ func BuildGraph(files []domain.SourceFile, imports []domain.ImportReference) Bui
 		dst string
 	}
 	seenEdges := make(map[edgeKey]bool)
+	evidenceCounts := make(map[edgeKey]int)
 	var edges []Edge
 
 	externalCount := 0
@@ -65,12 +74,17 @@ func BuildGraph(files []domain.SourceFile, imports []domain.ImportReference) Bui
 				continue
 			}
 			k := edgeKey{src: imp.SourcePath, dst: imp.TargetPath}
+			evidenceCounts[k]++
 			if !seenEdges[k] {
 				seenEdges[k] = true
 				edges = append(edges, Edge{
-					SourcePath: imp.SourcePath,
-					TargetPath: imp.TargetPath,
-					Kind:       "import",
+					SourcePath:       imp.SourcePath,
+					TargetPath:       imp.TargetPath,
+					Kind:             "import",
+					SourcePackage:    imp.SourcePackage,
+					TargetPackage:    imp.TargetPackage,
+					BuildConstraints: imp.BuildConstraints,
+					IsConditional:    imp.BuildConstraints != "",
 				})
 				fileMap[imp.SourcePath].OutDegree++
 				fileMap[imp.TargetPath].InDegree++
@@ -82,6 +96,11 @@ func BuildGraph(files []domain.SourceFile, imports []domain.ImportReference) Bui
 		}
 	}
 
+	for i := range edges {
+		k := edgeKey{src: edges[i].SourcePath, dst: edges[i].TargetPath}
+		edges[i].EvidenceCount = evidenceCounts[k]
+	}
+
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].SourcePath != edges[j].SourcePath {
 			return edges[i].SourcePath < edges[j].SourcePath
@@ -89,15 +108,30 @@ func BuildGraph(files []domain.SourceFile, imports []domain.ImportReference) Bui
 		return edges[i].TargetPath < edges[j].TargetPath
 	})
 
+	lang := "python"
+	granularity := "file"
+	if len(sortedFiles) > 0 && sortedFiles[0].Language == "go" {
+		lang = "go"
+		granularity = "package"
+	}
+
 	for i := range sortedFiles {
 		f := &sortedFiles[i]
-		f.IsEntrypoint = IsEntrypointFile(f.Path)
+		if f.Language == "go" || f.NodeKind == "package" {
+			if f.PackageName == "main" || strings.HasPrefix(f.DirectoryPath, "cmd/") || f.DirectoryPath == "cmd" {
+				f.IsEntrypoint = true
+			}
+		} else {
+			f.IsEntrypoint = IsEntrypointFile(f.Path)
+		}
 		f.ImportanceScore = ComputeImportanceScore(f.InDegree, f.OutDegree, f.IsEntrypoint)
 	}
 
 	recommended := SelectRecommendedFileIDs(sortedFiles, 5)
 
 	return BuildOutput{
+		Language:               lang,
+		GraphGranularity:       granularity,
 		Files:                  sortedFiles,
 		Edges:                  edges,
 		Imports:                imports,

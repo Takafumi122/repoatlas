@@ -88,7 +88,7 @@ func main() {
 	}
 
 	if strings.EqualFold(os.Getenv("RUN_EMBEDDED_WORKER"), "true") || strings.EqualFold(cfg.DatabaseURL, "memory") {
-		az := analyzer.NewPythonAnalyzer()
+		az := analyzer.NewCompositeAnalyzer()
 		proc := jobs.NewProcessor(st, gh, az, jobs.ProcessorOptions{
 			AnalysisTimeout: cfg.AnalysisTimeout,
 		})

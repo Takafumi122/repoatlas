@@ -20,14 +20,17 @@ const (
 type AnalysisStage string
 
 const (
-	StageQueued     AnalysisStage = "queued"
-	StageFetching   AnalysisStage = "fetching"
-	StageIndexing   AnalysisStage = "indexing"
-	StageParsing    AnalysisStage = "parsing"
-	StageResolving  AnalysisStage = "resolving"
-	StagePersisting AnalysisStage = "persisting"
-	StageCompleted  AnalysisStage = "completed"
-	StageFailed     AnalysisStage = "failed"
+	StageQueued            AnalysisStage = "queued"
+	StageFetching          AnalysisStage = "fetching"
+	StageIndexing          AnalysisStage = "indexing"
+	StageParsing           AnalysisStage = "parsing"
+	StageResolving         AnalysisStage = "resolving"
+	StageResolvingMetadata AnalysisStage = "resolving_metadata"
+	StageAnalyzingHead     AnalysisStage = "analyzing_head"
+	StageAnalyzingImpact   AnalysisStage = "analyzing_impact"
+	StagePersisting        AnalysisStage = "persisting"
+	StageCompleted         AnalysisStage = "completed"
+	StageFailed            AnalysisStage = "failed"
 )
 
 type Repository struct {
@@ -47,6 +50,8 @@ type AnalysisRun struct {
 	Repository             Repository     `json:"repository"`
 	CommitSHA              string         `json:"commit_sha"`
 	AnalyzerVersion        string         `json:"-"`
+	Language               string         `json:"language,omitempty"`
+	GraphGranularity       string         `json:"graph_granularity,omitempty"`
 	Status                 AnalysisStatus `json:"status"`
 	Stage                  AnalysisStage  `json:"stage"`
 	AttemptCount           int            `json:"-"`
@@ -66,17 +71,21 @@ type AnalysisRun struct {
 type ErrorCode string
 
 const (
-	ErrCodeInvalidRepositoryURL ErrorCode = "INVALID_REPOSITORY_URL"
-	ErrCodeRepositoryNotFound   ErrorCode = "REPOSITORY_NOT_FOUND"
-	ErrCodeRepositoryNotPublic  ErrorCode = "REPOSITORY_NOT_PUBLIC"
-	ErrCodeRepoTooLarge         ErrorCode = "REPO_TOO_LARGE"
-	ErrCodeGitHubRateLimited    ErrorCode = "GITHUB_RATE_LIMITED"
-	ErrCodeRateLimited          ErrorCode = "RATE_LIMITED"
-	ErrCodeQueueLimitExceeded   ErrorCode = "QUEUE_LIMIT_EXCEEDED"
-	ErrCodeAnalysisNotReady     ErrorCode = "ANALYSIS_NOT_READY"
-	ErrCodeAnalysisNotFound     ErrorCode = "ANALYSIS_NOT_FOUND"
-	ErrCodeInvalidArchive       ErrorCode = "INVALID_ARCHIVE"
-	ErrCodeInternalError        ErrorCode = "INTERNAL_ERROR"
+	ErrCodeInvalidRepositoryURL  ErrorCode = "INVALID_REPOSITORY_URL"
+	ErrCodeInvalidPullRequestURL ErrorCode = "INVALID_PULL_REQUEST_URL"
+	ErrCodeRepositoryNotFound    ErrorCode = "REPOSITORY_NOT_FOUND"
+	ErrCodePullRequestNotFound   ErrorCode = "PULL_REQUEST_NOT_FOUND"
+	ErrCodeRepositoryNotPublic   ErrorCode = "REPOSITORY_NOT_PUBLIC"
+	ErrCodeRepoTooLarge          ErrorCode = "REPO_TOO_LARGE"
+	ErrCodePRTooManyFiles        ErrorCode = "PR_TOO_MANY_FILES"
+	ErrCodePRHeadSHAChanged      ErrorCode = "PR_HEAD_SHA_CHANGED"
+	ErrCodeGitHubRateLimited     ErrorCode = "GITHUB_RATE_LIMITED"
+	ErrCodeRateLimited           ErrorCode = "RATE_LIMITED"
+	ErrCodeQueueLimitExceeded    ErrorCode = "QUEUE_LIMIT_EXCEEDED"
+	ErrCodeAnalysisNotReady      ErrorCode = "ANALYSIS_NOT_READY"
+	ErrCodeAnalysisNotFound      ErrorCode = "ANALYSIS_NOT_FOUND"
+	ErrCodeInvalidArchive        ErrorCode = "INVALID_ARCHIVE"
+	ErrCodeInternalError         ErrorCode = "INTERNAL_ERROR"
 )
 
 type AppError struct {

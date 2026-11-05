@@ -1,0 +1,12 @@
+{
+  "name": "03_relative_same",
+  "description": "Same directory relative imports",
+  "internal_edges": [
+    {
+      "source": "pkg/a.py",
+      "target": "pkg/b.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}

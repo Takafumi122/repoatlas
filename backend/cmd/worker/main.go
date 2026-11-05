@@ -56,7 +56,7 @@ func main() {
 	if !cfg.IsProduction() && cfg.MockGitHubFixtureDir != "" {
 		gh = githubclient.NewFixtureFallbackClient(gh, cfg.MockGitHubFixtureDir)
 	}
-	az := analyzer.NewPythonAnalyzer()
+	az := analyzer.NewCompositeAnalyzer()
 
 	proc := jobs.NewProcessor(st, gh, az, jobs.ProcessorOptions{
 		AnalysisTimeout: cfg.AnalysisTimeout,

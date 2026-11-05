@@ -1250,3 +1250,157 @@ code {
     display: none;
   }
 }
+
+/* Phase 6 Architecture Diff Styles */
+.rf-diff-node {
+  width: 240px;
+  background: #131c2e;
+  border: 1.5px solid #334155;
+  border-left: 5px solid #64748b;
+  border-radius: 10px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  color: var(--text-main);
+  transition: border-color 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rf-diff-node-added {
+  border-color: rgba(34, 197, 94, 0.6) !important;
+  border-left-color: #22c55e !important;
+  background: #0f231a !important;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.25), 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.rf-diff-node-removed {
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  border-left-color: #ef4444 !important;
+  border-style: dashed !important;
+  background: #231215 !important;
+  opacity: 0.85;
+}
+
+.rf-diff-node-modified {
+  border-color: rgba(245, 158, 11, 0.6) !important;
+  border-left-color: #f59e0b !important;
+  background: #231d10 !important;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25), 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.rf-diff-node-unchanged {
+  border-color: #334155;
+  border-left-color: #64748b;
+  background: #131c2e;
+}
+
+.rf-diff-node-selected {
+  border-color: var(--accent-focus) !important;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35), 0 8px 20px rgba(0, 0, 0, 0.6) !important;
+}
+
+.rf-diff-node-dimmed {
+  opacity: 0.18;
+}
+
+.badge-diff-added {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.badge-diff-removed {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.badge-diff-modified {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-diff-unchanged {
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.4);
+}
+
+.badge-diff-cycle {
+  background: rgba(220, 38, 38, 0.25);
+  color: #fca5a5;
+  border: 1px solid rgba(220, 38, 38, 0.6);
+  font-weight: 700;
+}
+
+.badge-package {
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.diff-summary-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+
+.diff-stat-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.diff-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.diff-view-segmented {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.diff-seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.diff-seg-btn-active {
+  background: var(--accent-focus);
+  color: #0f172a;
+}
+
+.diff-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  overflow-x: auto;
+}

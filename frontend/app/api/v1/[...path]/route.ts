@@ -12,8 +12,8 @@ function getTargetOrigin(): string {
     return envTarget.trim().replace(/\/$/, "");
   }
 
-  // Default to Railway internal API domain on port 8000 (with port 8080 fallback for local dev)
-  if (process.env.NODE_ENV === "production") {
+  // Default to Railway internal API domain on port 8000 when running in Railway production
+  if (process.env.NODE_ENV === "production" && (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_ID)) {
     return "http://api.railway.internal:8000";
   }
   return "http://localhost:8080";

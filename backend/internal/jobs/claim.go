@@ -26,6 +26,16 @@ func ClaimNext(ctx context.Context, st store.Store, leaseOwner string, leaseDura
 	return st.ClaimNextAnalysis(ctx, leaseOwner, leaseDuration)
 }
 
+func ClaimNextPR(ctx context.Context, st store.Store, leaseOwner string, leaseDuration time.Duration) (*domain.PullRequestAnalysis, bool, error) {
+	if leaseDuration <= 0 {
+		leaseDuration = DefaultLeaseDuration
+	}
+	if leaseOwner == "" {
+		leaseOwner = generateLeaseToken()
+	}
+	return st.ClaimNextPRAnalysis(ctx, leaseOwner, leaseDuration)
+}
+
 func generateLeaseToken() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])

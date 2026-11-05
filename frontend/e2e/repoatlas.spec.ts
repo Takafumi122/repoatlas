@@ -11,7 +11,7 @@ test.describe("RepoAtlas E2E User Flows", () => {
     ).toBeVisible();
 
     // 2. GitHub URLを入力する (外部GitHub接続に依存しないfixtureリポジトリ)
-    const urlInput = page.getByLabel("GitHub Public Repository URL (Python)");
+    const urlInput = page.getByLabel(/GitHub Public Repository URL/);
     await urlInput.fill("https://github.com/fixture/python-small");
     await page.getByRole("button", { name: "依存グラフを解析" }).click();
 
@@ -217,5 +217,27 @@ test.describe("RepoAtlas E2E User Flows", () => {
     await page.screenshot({ path: "../docs/images/graph-mobile-375.png" });
 
     expect(runtimeErrors).toEqual([]);
+  });
+
+  test("4. Architecture Diff UI/UX verification (/diff -> fill -> samples -> screenshot)", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/diff");
+    await expect(
+      page.getByRole("heading", { name: "Architecture Diff" })
+    ).toBeVisible();
+
+    // Verify sample diff buttons
+    const cobraBtn = page.getByRole("button", { name: /spf13\/cobra/ });
+    await expect(cobraBtn).toBeVisible();
+    await cobraBtn.click();
+
+    // Verify inputs populated
+    await expect(page.locator("#repo-url-input")).toHaveValue("https://github.com/spf13/cobra");
+    await expect(page.locator("#base-sha-input")).toHaveValue("2077efab5d203e8ff60293674fe8c6ef1fcad243");
+    await expect(page.locator("#head-sha-input")).toHaveValue("cd378035b3769971bc18bfb672778c187be06ad9");
+
+    await page.screenshot({ path: "../docs/images/diff-form-1440.png" });
   });
 });

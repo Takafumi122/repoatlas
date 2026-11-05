@@ -51,6 +51,13 @@ type ExtractedFile struct {
 // ExtractPythonFilesFromZip reads a ZIP archive in memory with strict size, count,
 // symlink, and path traversal guards, returning only regular .py files.
 func ExtractPythonFilesFromZip(r io.Reader, limits ArchiveLimits) ([]ExtractedFile, error) {
+	files, _, err := ExtractRepositoryFilesFromZip(r, limits)
+	return files, err
+}
+
+// ExtractRepositoryFilesFromZip auto-detects language (Go vs Python) and extracts source files
+// with strict memory, size, count, symlink, and path traversal guards.
+func ExtractRepositoryFilesFromZip(r io.Reader, limits ArchiveLimits) ([]ExtractedFile, string, error) {
 	if limits.MaxCompressedBytes <= 0 {
 		limits = DefaultArchiveLimits()
 	}
@@ -58,83 +65,112 @@ func ExtractPythonFilesFromZip(r io.Reader, limits ArchiveLimits) ([]ExtractedFi
 	limitedCompressed := io.LimitReader(r, limits.MaxCompressedBytes+1)
 	rawZip, err := io.ReadAll(limitedCompressed)
 	if err != nil {
-		return nil, domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "ZIPアーカイブの読み込みに失敗しました", err)
+		return nil, "", domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "ZIPアーカイブの読み込みに失敗しました", err)
 	}
 	if int64(len(rawZip)) > limits.MaxCompressedBytes {
-		return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ZIPの圧縮サイズが上限（50MiB）を超えています", nil)
+		return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ZIPの圧縮サイズが上限（50MiB）を超えています", nil)
 	}
 
 	zr, err := zip.NewReader(bytes.NewReader(rawZip), int64(len(rawZip)))
 	if err != nil {
-		return nil, domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "不正なZIPアーカイブ形式です", err)
+		return nil, "", domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "不正なZIPアーカイブ形式です", err)
 	}
 
 	if len(zr.File) > limits.MaxEntries {
-		return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ZIP内のエントリ数が上限を超えています", nil)
+		return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ZIP内のエントリ数が上限を超えています", nil)
+	}
+
+	// First pass: detect language by checking for go.mod, .go vs .py
+	var goCount, pyCount int
+	var hasGoMod bool
+	for _, f := range zr.File {
+		relPath, err := sanitizeZipEntryPath(f.Name)
+		if err != nil || relPath == "" || f.FileInfo().IsDir() {
+			continue
+		}
+		base := path.Base(relPath)
+		if base == "go.mod" {
+			hasGoMod = true
+			goCount++
+		} else if base == "go.work" || strings.HasSuffix(relPath, ".go") {
+			goCount++
+		} else if strings.HasSuffix(relPath, ".py") {
+			pyCount++
+		}
+	}
+
+	detectedLang := "python"
+	if hasGoMod || goCount > pyCount {
+		detectedLang = "go"
+	}
+
+	isTargetFile := func(relPath string) bool {
+		base := path.Base(relPath)
+		if detectedLang == "go" {
+			return base == "go.mod" || base == "go.work" || strings.HasSuffix(relPath, ".go")
+		}
+		return strings.HasSuffix(relPath, ".py")
 	}
 
 	var totalUncompressedDeclared uint64
-	var totalPythonBytes int64
+	var totalSourceBytes int64
 	var files []ExtractedFile
 	seenPaths := make(map[string]bool)
 
 	for _, f := range zr.File {
-		// Validate entry path before anything else
 		relPath, err := sanitizeZipEntryPath(f.Name)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		mode := f.Mode()
 
-		// Accumulate declared uncompressed size across the entire archive
 		totalUncompressedDeclared += f.UncompressedSize64
 		if totalUncompressedDeclared > uint64(limits.MaxUncompressedTotalBytes) {
-			return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ZIPの展開後合計サイズが上限（100MiB）を超えています", nil)
+			return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ZIPの展開後合計サイズが上限（100MiB）を超えています", nil)
 		}
 
 		if f.FileInfo().IsDir() || relPath == "" {
 			continue
 		}
-		if !strings.HasSuffix(relPath, ".py") {
+		if !isTargetFile(relPath) {
 			continue
 		}
 
-		// Reject .py symlinks explicitly
+		// Reject symlinks explicitly
 		if mode&os.ModeSymlink != 0 {
-			return nil, domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, fmt.Sprintf("ZIP内にシンボリックリンクのPythonファイルが含まれています: %s", f.Name), nil)
+			return nil, "", domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, fmt.Sprintf("ZIP内にシンボリックリンクのソースファイルが含まれています: %s", f.Name), nil)
 		}
 		if !mode.IsRegular() {
 			continue
 		}
 
 		if len(files) >= limits.MaxPythonFiles {
-			return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, fmt.Sprintf("Pythonファイル数が上限（%d件）を超えています", limits.MaxPythonFiles), nil)
+			return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, fmt.Sprintf("対象ソースファイル数が上限（%d件）を超えています", limits.MaxPythonFiles), nil)
 		}
 
 		if f.UncompressedSize64 > uint64(limits.MaxSingleFileBytes) {
-			return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, fmt.Sprintf("ファイル %s のサイズが上限（1MiB）を超えています", relPath), nil)
+			return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, fmt.Sprintf("ファイル %s のサイズが上限（1MiB）を超えています", relPath), nil)
 		}
 
 		rc, err := f.Open()
 		if err != nil {
-			return nil, domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "ZIP内ファイルの展開に失敗しました", err)
+			return nil, "", domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "ZIP内ファイルの展開に失敗しました", err)
 		}
 
 		content, readErr := io.ReadAll(io.LimitReader(rc, limits.MaxSingleFileBytes+1))
 		rc.Close()
 		if readErr != nil {
-			return nil, domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "ZIP内ファイルの読み取りに失敗しました", readErr)
+			return nil, "", domain.NewAppError(domain.ErrCodeInvalidArchive, http.StatusBadRequest, "ZIP内ファイルの読み取りに失敗しました", readErr)
 		}
 
-		// Guard against ZIP bomb lying about UncompressedSize64 header
 		if int64(len(content)) > limits.MaxSingleFileBytes {
-			return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, fmt.Sprintf("ファイル %s の展開サイズが上限（1MiB）を超えています", relPath), nil)
+			return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, fmt.Sprintf("ファイル %s の展開サイズが上限（1MiB）を超えています", relPath), nil)
 		}
 
-		totalPythonBytes += int64(len(content))
-		if totalPythonBytes > limits.MaxTotalPythonBytes {
-			return nil, domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "Pythonソースコードの合計サイズが上限（20MiB）を超えています", nil)
+		totalSourceBytes += int64(len(content))
+		if totalSourceBytes > limits.MaxTotalPythonBytes {
+			return nil, "", domain.NewAppError(domain.ErrCodeRepoTooLarge, http.StatusRequestEntityTooLarge, "ソースコードの合計サイズが上限（20MiB）を超えています", nil)
 		}
 
 		if seenPaths[relPath] {
@@ -151,7 +187,7 @@ func ExtractPythonFilesFromZip(r io.Reader, limits ArchiveLimits) ([]ExtractedFi
 		return files[i].Path < files[j].Path
 	})
 
-	return files, nil
+	return files, detectedLang, nil
 }
 
 // sanitizeZipEntryPath validates a ZIP entry name against Zip Slip, absolute paths,

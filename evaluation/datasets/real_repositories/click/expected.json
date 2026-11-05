@@ -1,0 +1,59 @@
+{
+  "repo": "pallets/click",
+  "commit_sha": "4b4700f1c3057e6ae8cfbe9eb586ef8e55e09f7a",
+  "description": "pallets/click v8.1.7 core dependency graph",
+  "internal_edges": [
+    {
+      "source": "src/click/__init__.py",
+      "target": "src/click/core.py"
+    },
+    {
+      "source": "src/click/__init__.py",
+      "target": "src/click/decorators.py"
+    },
+    {
+      "source": "src/click/__init__.py",
+      "target": "src/click/exceptions.py"
+    },
+    {
+      "source": "src/click/__init__.py",
+      "target": "src/click/types.py"
+    },
+    {
+      "source": "src/click/__init__.py",
+      "target": "src/click/utils.py"
+    },
+    {
+      "source": "src/click/types.py",
+      "target": "src/click/exceptions.py"
+    },
+    {
+      "source": "src/click/formatting.py",
+      "target": "src/click/utils.py"
+    },
+    {
+      "source": "src/click/parser.py",
+      "target": "src/click/exceptions.py"
+    },
+    {
+      "source": "src/click/core.py",
+      "target": "src/click/exceptions.py"
+    },
+    {
+      "source": "src/click/core.py",
+      "target": "src/click/types.py"
+    },
+    {
+      "source": "src/click/core.py",
+      "target": "src/click/parser.py"
+    },
+    {
+      "source": "src/click/core.py",
+      "target": "src/click/formatting.py"
+    },
+    {
+      "source": "src/click/decorators.py",
+      "target": "src/click/core.py"
+    }
+  ]
+}

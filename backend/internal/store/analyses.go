@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,10 +19,32 @@ var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
 func (s *PostgresStore) CountActiveAnalyses(ctx context.Context) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM analysis_runs
-		WHERE status IN ('queued', 'running')
+		SELECT (SELECT COUNT(*) FROM analysis_runs WHERE status IN ('queued', 'running')) +
+		       (SELECT COUNT(*) FROM pull_request_analyses WHERE status IN ('queued', 'running'))
 	`).Scan(&count)
+	if err != nil {
+		err = s.pool.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM analysis_runs
+			WHERE status IN ('queued', 'running')
+		`).Scan(&count)
+	}
+	return count, err
+}
+
+func (s *PostgresStore) countActiveAnalysesTx(ctx context.Context, tx pgx.Tx) (int, error) {
+	var count int
+	err := tx.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM analysis_runs WHERE status IN ('queued', 'running')) +
+		       (SELECT COUNT(*) FROM pull_request_analyses WHERE status IN ('queued', 'running'))
+	`).Scan(&count)
+	if err != nil {
+		err = tx.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM analysis_runs
+			WHERE status IN ('queued', 'running')
+		`).Scan(&count)
+	}
 	return count, err
 }
 
@@ -70,12 +93,8 @@ func (s *PostgresStore) CreateOrGetAnalysis(ctx context.Context, snap githubclie
 			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(739001)`); err != nil {
 				return domain.AnalysisRun{}, false, fmt.Errorf("acquire queue limit lock: %w", err)
 			}
-			var activeCount int
-			if err := tx.QueryRow(ctx, `
-				SELECT COUNT(*)
-				FROM analysis_runs
-				WHERE status IN ('queued', 'running')
-			`).Scan(&activeCount); err != nil {
+			activeCount, err := s.countActiveAnalysesTx(ctx, tx)
+			if err != nil {
 				return domain.AnalysisRun{}, false, fmt.Errorf("count active analyses: %w", err)
 			}
 			if activeCount >= s.maxQueuedJobs {
@@ -153,6 +172,8 @@ func (s *PostgresStore) GetAnalysis(ctx context.Context, id string) (domain.Anal
 			a.repository_id,
 			a.commit_sha,
 			a.analyzer_version,
+			COALESCE(a.language, 'python'),
+			COALESCE(a.graph_granularity, 'file'),
 			a.status,
 			a.stage,
 			a.attempt_count,
@@ -181,6 +202,8 @@ func (s *PostgresStore) GetAnalysis(ctx context.Context, id string) (domain.Anal
 		&run.RepositoryID,
 		&run.CommitSHA,
 		&run.AnalyzerVersion,
+		&run.Language,
+		&run.GraphGranularity,
 		&status,
 		&stage,
 		&run.AttemptCount,
@@ -350,6 +373,250 @@ func (s *PostgresStore) FailAnalysis(ctx context.Context, id string, leaseOwner 
 	`, id, code, message, leaseOwner)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrLeaseLost
+	}
+	return nil
+}
+
+func (s *PostgresStore) CreateOrGetArchitectureDiff(
+	ctx context.Context,
+	snap githubclient.RepositorySnapshot,
+	baseSHA, headSHA string,
+	analyzerVersion, diffAlgVersion string,
+) (domain.ArchitectureDiffAnalysis, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.ArchitectureDiffAnalysis{}, false, fmt.Errorf("begin diff tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var repoID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO repositories (github_repository_id, owner, name, default_branch, html_url, updated_at)
+		VALUES ($1, $2, $3, $4, $5, now())
+		ON CONFLICT (github_repository_id) DO UPDATE
+		SET owner = EXCLUDED.owner,
+		    name = EXCLUDED.name,
+		    default_branch = EXCLUDED.default_branch,
+		    html_url = EXCLUDED.html_url,
+		    updated_at = now()
+		RETURNING id
+	`, snap.GitHubID, snap.Owner, snap.Name, snap.DefaultBranch, snap.HTMLURL).Scan(&repoID)
+	if err != nil {
+		return domain.ArchitectureDiffAnalysis{}, false, fmt.Errorf("upsert repository for diff: %w", err)
+	}
+
+	repo := domain.Repository{
+		ID:                 repoID,
+		GitHubRepositoryID: snap.GitHubID,
+		Owner:              snap.Owner,
+		Name:               snap.Name,
+		DefaultBranch:      snap.DefaultBranch,
+		HTMLURL:            snap.HTMLURL,
+	}
+
+	var diffID string
+	var status string
+	var stage string
+	var summaryJSON []byte
+	var createdAt time.Time
+	var completedAt *time.Time
+
+	// Check if already exists
+	existingErr := tx.QueryRow(ctx, `
+		SELECT id::text, status, stage, diff_summary, created_at, completed_at
+		FROM architecture_diffs
+		WHERE repository_id = $1 AND base_sha = $2 AND head_sha = $3
+		  AND analyzer_version = $4 AND diff_algorithm_version = $5
+	`, repoID, baseSHA, headSHA, analyzerVersion, diffAlgVersion).Scan(&diffID, &status, &stage, &summaryJSON, &createdAt, &completedAt)
+
+	inserted := false
+	if errors.Is(existingErr, pgx.ErrNoRows) {
+		insertErr := tx.QueryRow(ctx, `
+			INSERT INTO architecture_diffs (
+				repository_id, base_sha, head_sha, analyzer_version, diff_algorithm_version, status, stage
+			)
+			VALUES ($1, $2, $3, $4, $5, 'queued', 'queued')
+			ON CONFLICT (repository_id, base_sha, head_sha, analyzer_version, diff_algorithm_version) DO NOTHING
+			RETURNING id::text, status, stage, diff_summary, created_at, completed_at
+		`, repoID, baseSHA, headSHA, analyzerVersion, diffAlgVersion).Scan(&diffID, &status, &stage, &summaryJSON, &createdAt, &completedAt)
+
+		if errors.Is(insertErr, pgx.ErrNoRows) {
+			if err := tx.QueryRow(ctx, `
+				SELECT id::text, status, stage, diff_summary, created_at, completed_at
+				FROM architecture_diffs
+				WHERE repository_id = $1 AND base_sha = $2 AND head_sha = $3
+				  AND analyzer_version = $4 AND diff_algorithm_version = $5
+			`, repoID, baseSHA, headSHA, analyzerVersion, diffAlgVersion).Scan(&diffID, &status, &stage, &summaryJSON, &createdAt, &completedAt); err != nil {
+				return domain.ArchitectureDiffAnalysis{}, false, fmt.Errorf("query existing diff after conflict: %w", err)
+			}
+		} else if insertErr != nil {
+			return domain.ArchitectureDiffAnalysis{}, false, fmt.Errorf("insert architecture_diff: %w", insertErr)
+		} else {
+			inserted = true
+		}
+	} else if existingErr != nil {
+		return domain.ArchitectureDiffAnalysis{}, false, fmt.Errorf("check existing architecture_diff: %w", existingErr)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ArchitectureDiffAnalysis{}, false, fmt.Errorf("commit diff tx: %w", err)
+	}
+
+	var summary *domain.DiffSummary
+	if len(summaryJSON) > 0 {
+		var s domain.DiffSummary
+		if err := json.Unmarshal(summaryJSON, &s); err == nil {
+			summary = &s
+		}
+	}
+
+	diffAnalysis := domain.ArchitectureDiffAnalysis{
+		ID:                   diffID,
+		RepositoryID:         repoID,
+		Repository:           repo,
+		BaseSHA:              baseSHA,
+		HeadSHA:              headSHA,
+		AnalyzerVersion:      analyzerVersion,
+		DiffAlgorithmVersion: diffAlgVersion,
+		Status:               domain.DiffStatus(status),
+		Stage:                stage,
+		DiffSummary:          summary,
+		CreatedAt:            createdAt,
+		CompletedAt:          completedAt,
+	}
+
+	cached := !inserted && diffAnalysis.Status == domain.DiffStatusCompleted
+	return diffAnalysis, cached, nil
+}
+
+func (s *PostgresStore) GetArchitectureDiff(ctx context.Context, id string) (domain.ArchitectureDiffAnalysis, error) {
+	if !uuidRegex.MatchString(id) {
+		return domain.ArchitectureDiffAnalysis{}, domain.NewAppError(domain.ErrCodeAnalysisNotFound, http.StatusNotFound, "指定された差分解析IDが見つかりません", nil)
+	}
+
+	var diffAnalysis domain.ArchitectureDiffAnalysis
+	var status string
+	var summaryJSON []byte
+
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			d.id::text,
+			d.repository_id,
+			d.base_sha,
+			d.head_sha,
+			d.base_analysis_id::text,
+			d.head_analysis_id::text,
+			d.analyzer_version,
+			d.diff_algorithm_version,
+			d.status,
+			d.stage,
+			d.attempt_count,
+			d.lease_owner,
+			d.lease_expires_at,
+			d.error_code,
+			d.error_message,
+			d.diff_summary,
+			d.created_at,
+			d.completed_at,
+			r.id,
+			r.github_repository_id,
+			r.owner,
+			r.name,
+			r.default_branch,
+			r.html_url
+		FROM architecture_diffs d
+		JOIN repositories r ON r.id = d.repository_id
+		WHERE d.id = $1::uuid
+	`, id).Scan(
+		&diffAnalysis.ID,
+		&diffAnalysis.RepositoryID,
+		&diffAnalysis.BaseSHA,
+		&diffAnalysis.HeadSHA,
+		&diffAnalysis.BaseAnalysisID,
+		&diffAnalysis.HeadAnalysisID,
+		&diffAnalysis.AnalyzerVersion,
+		&diffAnalysis.DiffAlgorithmVersion,
+		&status,
+		&diffAnalysis.Stage,
+		&diffAnalysis.AttemptCount,
+		&diffAnalysis.LeaseOwner,
+		&diffAnalysis.LeaseExpiresAt,
+		&diffAnalysis.ErrorCode,
+		&diffAnalysis.ErrorMessage,
+		&summaryJSON,
+		&diffAnalysis.CreatedAt,
+		&diffAnalysis.CompletedAt,
+		&diffAnalysis.Repository.ID,
+		&diffAnalysis.Repository.GitHubRepositoryID,
+		&diffAnalysis.Repository.Owner,
+		&diffAnalysis.Repository.Name,
+		&diffAnalysis.Repository.DefaultBranch,
+		&diffAnalysis.Repository.HTMLURL,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ArchitectureDiffAnalysis{}, domain.NewAppError(domain.ErrCodeAnalysisNotFound, http.StatusNotFound, "指定された差分解析IDが見つかりません", nil)
+	}
+	if err != nil {
+		return domain.ArchitectureDiffAnalysis{}, fmt.Errorf("get architecture_diff: %w", err)
+	}
+
+	diffAnalysis.Status = domain.DiffStatus(status)
+	if len(summaryJSON) > 0 {
+		var s domain.DiffSummary
+		if err := json.Unmarshal(summaryJSON, &s); err == nil {
+			diffAnalysis.DiffSummary = &s
+		}
+	}
+
+	return diffAnalysis, nil
+}
+
+func (s *PostgresStore) CompleteArchitectureDiff(ctx context.Context, id string, leaseOwner string, summary domain.DiffSummary) error {
+	summaryBytes, err := json.Marshal(summary)
+	if err != nil {
+		return fmt.Errorf("marshal diff summary: %w", err)
+	}
+
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE architecture_diffs
+		SET status = 'completed',
+		    stage = 'completed',
+		    diff_summary = $2,
+		    error_code = NULL,
+		    error_message = NULL,
+		    lease_owner = NULL,
+		    lease_expires_at = NULL,
+		    completed_at = now()
+		WHERE id = $1::uuid
+		  AND ($3 = '' OR lease_owner = $3 OR lease_owner IS NULL)
+	`, id, summaryBytes, leaseOwner)
+	if err != nil {
+		return fmt.Errorf("update architecture_diff completed: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrLeaseLost
+	}
+	return nil
+}
+
+func (s *PostgresStore) FailArchitectureDiff(ctx context.Context, id string, leaseOwner string, code string, message string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE architecture_diffs
+		SET status = 'failed',
+		    stage = 'failed',
+		    error_code = $2,
+		    error_message = $3,
+		    lease_owner = NULL,
+		    lease_expires_at = NULL,
+		    completed_at = now()
+		WHERE id = $1::uuid
+		  AND ($4 = '' OR lease_owner = $4 OR lease_owner IS NULL)
+	`, id, code, message, leaseOwner)
+	if err != nil {
+		return fmt.Errorf("update architecture_diff failed: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrLeaseLost

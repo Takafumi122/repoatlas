@@ -167,9 +167,17 @@ func BuildGuidedTour(files []domain.SourceFile, edges []Edge, maxSteps int) []Gu
 
 	addStep := func(f domain.SourceFile, role TourRole, roleLabel string, score float64, reason string) {
 		selectedPaths[f.Path] = true
+		nodeID := domain.NodeIDForPath(f.Path)
+		if f.Language == "go" || f.NodeKind == "package" {
+			if f.PackageImportPath != "" {
+				nodeID = domain.NodeIDForPackage(f.PackageImportPath)
+			} else {
+				nodeID = domain.NodeIDForPackage(f.Path)
+			}
+		}
 		steps = append(steps, GuidedTourStep{
 			Step:         len(steps) + 1,
-			NodeID:       domain.NodeIDForPath(f.Path),
+			NodeID:       nodeID,
 			Path:         f.Path,
 			Role:         role,
 			RoleLabel:    roleLabel,
@@ -199,6 +207,11 @@ func BuildGuidedTour(files []domain.SourceFile, edges []Edge, maxSteps int) []Gu
 		}
 		base := path.Base(f.Path)
 		isExplicitEntry := f.IsEntrypoint || extendedEntrypointNames[base]
+		if f.Language == "go" || f.NodeKind == "package" {
+			if f.PackageName == "main" || strings.HasPrefix(f.DirectoryPath, "cmd/") || f.DirectoryPath == "cmd" {
+				isExplicitEntry = true
+			}
+		}
 		isFacade := isFacadeInit(f.Path) && (f.OutDegree > 0 || f.InDegree > 0)
 		isRootOrchestrator := f.InDegree == 0 && f.OutDegree > 0
 
@@ -213,7 +226,11 @@ func BuildGuidedTour(files []domain.SourceFile, edges []Edge, maxSteps int) []Gu
 		var reasonParts []string
 		if isExplicitEntry {
 			score += 6.0
-			reasonParts = append(reasonParts, fmt.Sprintf("実行の起点となるエントリーポイント (%s)", base))
+			if f.Language == "go" || f.NodeKind == "package" {
+				reasonParts = append(reasonParts, fmt.Sprintf("Go実行起点パッケージ (%s: %s)", f.PackageName, f.DirectoryPath))
+			} else {
+				reasonParts = append(reasonParts, fmt.Sprintf("実行の起点となるエントリーポイント (%s)", base))
+			}
 		} else if isFacade {
 			score += 4.2
 			reasonParts = append(reasonParts, "パッケージの公開API境界 (__init__.py)")

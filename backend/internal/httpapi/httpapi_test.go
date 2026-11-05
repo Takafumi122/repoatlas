@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,10 +20,11 @@ import (
 )
 
 type mockGitHubClient struct {
-	snapshot   githubclient.RepositorySnapshot
-	resolveErr error
-	archiveZip []byte
-	archiveErr error
+	snapshot    githubclient.RepositorySnapshot
+	resolveErr  error
+	archiveZip  []byte
+	archiveErr  error
+	archiveFunc func(snap githubclient.RepositorySnapshot) ([]byte, error)
 }
 
 func (m *mockGitHubClient) Resolve(_ context.Context, _, _ string) (githubclient.RepositorySnapshot, error) {
@@ -32,9 +34,64 @@ func (m *mockGitHubClient) Resolve(_ context.Context, _, _ string) (githubclient
 	return m.snapshot, nil
 }
 
-func (m *mockGitHubClient) DownloadArchive(_ context.Context, _ githubclient.RepositorySnapshot) (io.ReadCloser, error) {
+func (m *mockGitHubClient) ResolveCommit(_ context.Context, _, _, commitSHA string) (githubclient.RepositorySnapshot, error) {
+	if m.resolveErr != nil {
+		return githubclient.RepositorySnapshot{}, m.resolveErr
+	}
+	s := m.snapshot
+	s.CommitSHA = commitSHA
+	return s, nil
+}
+
+func (m *mockGitHubClient) GetPullRequest(_ context.Context, _, _ string, pullNumber int) (domain.PullRequestSnapshot, error) {
+	if m.resolveErr != nil {
+		return domain.PullRequestSnapshot{}, m.resolveErr
+	}
+	return domain.PullRequestSnapshot{
+		Repository: domain.Repository{
+			GitHubRepositoryID: m.snapshot.GitHubID,
+			Owner:              m.snapshot.Owner,
+			Name:               m.snapshot.Name,
+			DefaultBranch:      m.snapshot.DefaultBranch,
+			HTMLURL:            m.snapshot.HTMLURL,
+		},
+		PullNumber: pullNumber,
+		Title:      "PR Title",
+		State:      "open",
+		BaseSHA:    "0000000000111111111122222222223333333333",
+		HeadSHA:    m.snapshot.CommitSHA,
+		BaseRef:    "main",
+		HeadRef:    "feature",
+	}, nil
+}
+
+func (m *mockGitHubClient) GetPullRequestFiles(_ context.Context, _, _ string, _ int, _ int) ([]domain.PullRequestFile, error) {
+	if m.resolveErr != nil {
+		return nil, m.resolveErr
+	}
+	return []domain.PullRequestFile{
+		{
+			Path:       "app/models.py",
+			Status:     domain.PRFileModified,
+			Additions:  1,
+			Deletions:  0,
+			Changes:    1,
+			IsPython:   true,
+			IsAnalyzed: true,
+		},
+	}, nil
+}
+
+func (m *mockGitHubClient) DownloadArchive(_ context.Context, snap githubclient.RepositorySnapshot) (io.ReadCloser, error) {
 	if m.archiveErr != nil {
 		return nil, m.archiveErr
+	}
+	if m.archiveFunc != nil {
+		data, err := m.archiveFunc(snap)
+		if err != nil {
+			return nil, err
+		}
+		return io.NopCloser(bytes.NewReader(data)), nil
 	}
 	return io.NopCloser(bytes.NewReader(m.archiveZip)), nil
 }
@@ -406,4 +463,340 @@ func TestRateLimit_TrustedProxy_QueueLimit_And_LogRedaction(t *testing.T) {
 			t.Fatalf("unexpected impact body for app/db.py: %+v", impBody)
 		}
 	})
+}
+
+func buildGoFixtureZip(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	entries := map[string]string{
+		"owner-repo-deadbeef/go.mod": "module github.com/owner/repo\n\ngo 1.22\n",
+		"owner-repo-deadbeef/cmd/server/main.go": `package main
+
+import (
+	"fmt"
+	"github.com/owner/repo/internal/service"
+)
+
+func main() {
+	fmt.Println(service.Run())
+}
+`,
+		"owner-repo-deadbeef/internal/service/service.go": `package service
+
+import "github.com/owner/repo/internal/store"
+
+type Service struct{}
+
+func (s *Service) Execute() error {
+	return nil
+}
+
+func Run() string {
+	return store.Fetch()
+}
+`,
+		"owner-repo-deadbeef/internal/store/store.go": `package store
+
+type DB struct{}
+
+func Fetch() string {
+	return "ok"
+}
+`,
+	}
+	for name, content := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := io.WriteString(w, content); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestGoAnalysisAndEvidenceFlow(t *testing.T) {
+	const sha = "c0ffee11c0ffee11c0ffee11c0ffee11c0ffee11"
+	memStore := store.NewMemoryStore()
+	mockGH := &mockGitHubClient{
+		snapshot: githubclient.RepositorySnapshot{
+			GitHubID:      88,
+			Owner:         "owner",
+			Name:          "repo",
+			DefaultBranch: "main",
+			CommitSHA:     sha,
+			HTMLURL:       "https://github.com/owner/repo",
+		},
+		archiveZip: buildGoFixtureZip(t),
+	}
+
+	h := NewHandler(memStore, mockGH, "v1.0.0")
+	router := NewRouter(h, []string{"*"})
+
+	// 1. POST /api/v1/analyses
+	var analysisID string
+	{
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/analyses", strings.NewReader(`{"repository_url":"https://github.com/owner/repo"}`))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("expected 202 Accepted, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var createResp CreateAnalysisResponse
+		if err := json.NewDecoder(rec.Body).Decode(&createResp); err != nil {
+			t.Fatalf("decode create response: %v", err)
+		}
+		analysisID = createResp.AnalysisID
+	}
+
+	// 2. Process with Worker using CompositeAnalyzer
+	compAnalyzer := analyzer.NewCompositeAnalyzer()
+	proc := jobs.NewProcessor(memStore, mockGH, compAnalyzer, jobs.ProcessorOptions{})
+	worker := jobs.NewWorker(memStore, proc, 1, 0)
+	claimed, err := worker.StepOnce(context.Background())
+	if err != nil || !claimed {
+		t.Fatalf("worker failed to claim job: claimed=%v err=%v", claimed, err)
+	}
+
+	// 3. GET /api/v1/analyses/{id}
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/analyses/"+analysisID, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var status AnalysisStatusResponse
+		if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+			t.Fatalf("decode status: %v", err)
+		}
+		if status.Status != domain.StatusCompleted || status.Language != "go" || status.GraphGranularity != "package" {
+			t.Fatalf("unexpected status: %+v", status)
+		}
+	}
+
+	// 4. GET /api/v1/analyses/{id}/graph
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/analyses/"+analysisID+"/graph", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var graphResp GraphResponse
+		if err := json.NewDecoder(rec.Body).Decode(&graphResp); err != nil {
+			t.Fatalf("decode graph: %v", err)
+		}
+		if graphResp.Language != "go" || graphResp.GraphGranularity != "package" {
+			t.Fatalf("expected go / package, got %s / %s", graphResp.Language, graphResp.GraphGranularity)
+		}
+		if len(graphResp.Nodes) != 3 {
+			t.Fatalf("expected 3 package nodes, got %d", len(graphResp.Nodes))
+		}
+		// Check that nodes have node_kind = "package" and valid package details
+		foundMain := false
+		for _, n := range graphResp.Nodes {
+			if n.NodeKind != "package" {
+				t.Fatalf("expected node_kind 'package', got %s", n.NodeKind)
+			}
+			if n.PackageName == "main" {
+				foundMain = true
+				if !n.IsEntrypoint {
+					t.Fatalf("expected main package to be entrypoint")
+				}
+			}
+		}
+		if !foundMain {
+			t.Fatalf("main package not found in graph nodes")
+		}
+	}
+
+	// 5. GET /api/v1/analyses/{id}/evidence
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/analyses/"+analysisID+"/evidence", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for evidence, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var evResp EvidenceResponse
+		if err := json.NewDecoder(rec.Body).Decode(&evResp); err != nil {
+			t.Fatalf("decode evidence: %v", err)
+		}
+		if len(evResp.Imports) < 2 {
+			t.Fatalf("expected at least 2 import evidence records, got %d", len(evResp.Imports))
+		}
+		// Verify source_file, source_package, target_package
+		for _, imp := range evResp.Imports {
+			if imp.SourcePath == "" || imp.LineNumber == 0 {
+				t.Fatalf("invalid import evidence item: %+v", imp)
+			}
+		}
+	}
+}
+
+func TestArchitectureDiffFlow(t *testing.T) {
+	const baseSHA = "1111111111111111111111111111111111111111"
+	const headSHA = "2222222222222222222222222222222222222222"
+
+	baseZip := func() []byte {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		_ = zw.Close()
+		zw = zip.NewWriter(&buf)
+		w1, _ := zw.Create("repo-base/app/main.py")
+		_, _ = io.WriteString(w1, "import app.core\n\ndef main(): pass\n")
+		w2, _ := zw.Create("repo-base/app/core.py")
+		_, _ = io.WriteString(w2, "def run(): pass\n")
+		_ = zw.Close()
+		return buf.Bytes()
+	}()
+
+	headZip := func() []byte {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		w1, _ := zw.Create("repo-head/app/main.py")
+		_, _ = io.WriteString(w1, "import app.core\nimport app.metrics\n\ndef main(): pass\n")
+		w2, _ := zw.Create("repo-head/app/core.py")
+		_, _ = io.WriteString(w2, "def run(): pass\n")
+		w3, _ := zw.Create("repo-head/app/metrics.py")
+		_, _ = io.WriteString(w3, "def track(): pass\n")
+		_ = zw.Close()
+		return buf.Bytes()
+	}()
+
+	memStore := store.NewMemoryStore()
+	mockGH := &mockGitHubClient{
+		snapshot: githubclient.RepositorySnapshot{
+			GitHubID:      99,
+			Owner:         "testorg",
+			Name:          "diffrepo",
+			DefaultBranch: "main",
+			HTMLURL:       "https://github.com/testorg/diffrepo",
+		},
+		archiveFunc: func(snap githubclient.RepositorySnapshot) ([]byte, error) {
+			if snap.CommitSHA == baseSHA {
+				return baseZip, nil
+			}
+			return headZip, nil
+		},
+	}
+
+	h := NewHandler(memStore, mockGH, "v1.0.0")
+	router := NewRouter(h, []string{"*"})
+
+	// 1. POST /api/v1/architecture-diffs
+	var diffID string
+	{
+		body := fmt.Sprintf(`{"repository_url":"https://github.com/testorg/diffrepo","base_sha":"%s","head_sha":"%s"}`, baseSHA, headSHA)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/architecture-diffs", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("expected 202 Accepted, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var diffResp CreateArchitectureDiffResponse
+		if err := json.NewDecoder(rec.Body).Decode(&diffResp); err != nil {
+			t.Fatalf("decode diff response: %v", err)
+		}
+		diffID = diffResp.DiffID
+		if diffID == "" {
+			t.Fatal("empty diff id")
+		}
+	}
+
+	// 2. Process both base and head jobs
+	compAnalyzer := analyzer.NewCompositeAnalyzer()
+	proc := jobs.NewProcessor(memStore, mockGH, compAnalyzer, jobs.ProcessorOptions{})
+	worker := jobs.NewWorker(memStore, proc, 1, 0)
+
+	// Step once for base
+	claimed1, err := worker.StepOnce(context.Background())
+	if err != nil || !claimed1 {
+		t.Fatalf("worker step 1 failed: %v", err)
+	}
+	// Step once for head
+	claimed2, err := worker.StepOnce(context.Background())
+	if err != nil || !claimed2 {
+		t.Fatalf("worker step 2 failed: %v", err)
+	}
+
+	// 3. GET /api/v1/architecture-diffs/{id} -> should transition to completed
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/architecture-diffs/"+diffID, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var statusResp ArchitectureDiffStatusResponse
+		if err := json.NewDecoder(rec.Body).Decode(&statusResp); err != nil {
+			t.Fatalf("decode diff status: %v", err)
+		}
+		if statusResp.Status != domain.DiffStatusCompleted {
+			t.Fatalf("expected diff status completed, got %s", statusResp.Status)
+		}
+		if statusResp.Summary == nil {
+			t.Fatal("expected diff summary")
+		}
+		if statusResp.Summary.AddedNodesCount != 1 || statusResp.Summary.AddedEdgesCount != 1 {
+			t.Fatalf("expected 1 added node (metrics.py) and 1 added edge, got %+v", statusResp.Summary)
+		}
+	}
+
+	// 4. GET /api/v1/architecture-diffs/{id}/graph
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/architecture-diffs/"+diffID+"/graph", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var graphResp ArchitectureDiffGraphResponse
+		if err := json.NewDecoder(rec.Body).Decode(&graphResp); err != nil {
+			t.Fatalf("decode diff graph: %v", err)
+		}
+		if len(graphResp.Nodes) != 3 {
+			t.Fatalf("expected 3 diff nodes, got %d", len(graphResp.Nodes))
+		}
+		// Verify metrics.py is added, main.py is modified, core.py is unchanged
+		foundMetricsAdded := false
+		foundMainModified := false
+		foundCoreUnchanged := false
+		for _, n := range graphResp.Nodes {
+			if n.Path == "app/metrics.py" && n.ChangeType == domain.NodeChangeAdded {
+				foundMetricsAdded = true
+			}
+			if n.Path == "app/main.py" && n.ChangeType == domain.NodeChangeModified {
+				foundMainModified = true
+			}
+			if n.Path == "app/core.py" && n.ChangeType == domain.NodeChangeUnchanged {
+				foundCoreUnchanged = true
+			}
+		}
+		if !foundMetricsAdded || !foundMainModified || !foundCoreUnchanged {
+			t.Fatalf("unexpected node changes: metrics=%v main=%v core=%v", foundMetricsAdded, foundMainModified, foundCoreUnchanged)
+		}
+	}
+
+	// 5. Re-request POST /api/v1/architecture-diffs -> 200 OK cached=true
+	{
+		body := fmt.Sprintf(`{"repository_url":"https://github.com/testorg/diffrepo","base_sha":"%s","head_sha":"%s"}`, baseSHA, headSHA)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/architecture-diffs", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK on cached diff, got %d", rec.Code)
+		}
+		var cacheResp CreateArchitectureDiffResponse
+		_ = json.NewDecoder(rec.Body).Decode(&cacheResp)
+		if !cacheResp.Cached || cacheResp.Status != domain.DiffStatusCompleted || cacheResp.DiffID != diffID {
+			t.Fatalf("unexpected cached diff response: %+v", cacheResp)
+		}
+	}
 }

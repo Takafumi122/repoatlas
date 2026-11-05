@@ -40,6 +40,11 @@ export default defineConfig({
       url: "http://localhost:3000",
       reuseExistingServer: true,
       timeout: 60_000,
+      env: {
+        ...process.env,
+        INTERNAL_API_BASE_URL: "http://localhost:8080",
+        NEXT_PUBLIC_API_BASE_URL: "http://localhost:8080",
+      },
     },
   ],
   projects: [

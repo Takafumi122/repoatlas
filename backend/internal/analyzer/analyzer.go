@@ -2,8 +2,11 @@ package analyzer
 
 import (
 	"context"
+	"path"
 	"sort"
+	"strings"
 
+	golang "github.com/repoatlas/repoatlas/backend/internal/analyzer/golang"
 	"github.com/repoatlas/repoatlas/backend/internal/analyzer/graph"
 	"github.com/repoatlas/repoatlas/backend/internal/analyzer/python"
 	"github.com/repoatlas/repoatlas/backend/internal/domain"
@@ -18,6 +21,40 @@ type StageCallback func(stage domain.AnalysisStage)
 
 type Analyzer interface {
 	Analyze(ctx context.Context, files []SourceFile, onStage StageCallback) (graph.BuildOutput, error)
+}
+
+type CompositeAnalyzer struct {
+	pyAnalyzer *PythonAnalyzer
+	goAnalyzer *golang.GoAnalyzer
+}
+
+func NewCompositeAnalyzer() *CompositeAnalyzer {
+	return &CompositeAnalyzer{
+		pyAnalyzer: NewPythonAnalyzer(),
+		goAnalyzer: golang.NewGoAnalyzer(),
+	}
+}
+
+func (c *CompositeAnalyzer) Analyze(ctx context.Context, files []SourceFile, onStage StageCallback) (graph.BuildOutput, error) {
+	isGo := false
+	for _, f := range files {
+		base := path.Base(f.Path)
+		if base == "go.mod" || base == "go.work" || strings.HasSuffix(f.Path, ".go") {
+			isGo = true
+			break
+		}
+	}
+	if isGo {
+		goInputs := make([]golang.SourceInput, len(files))
+		for i, f := range files {
+			goInputs[i] = golang.SourceInput{
+				Path:    f.Path,
+				Content: f.Content,
+			}
+		}
+		return c.goAnalyzer.Analyze(ctx, goInputs, golang.StageCallback(onStage))
+	}
+	return c.pyAnalyzer.Analyze(ctx, files, onStage)
 }
 
 type PythonAnalyzer struct {

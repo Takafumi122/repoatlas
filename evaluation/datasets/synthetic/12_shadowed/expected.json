@@ -1,0 +1,12 @@
+{
+  "name": "12_shadowed",
+  "description": "Local file shadowing a standard library name",
+  "internal_edges": [
+    {
+      "source": "caller.py",
+      "target": "json.py"
+    }
+  ],
+  "external_imports": [],
+  "unresolved_imports": []
+}
